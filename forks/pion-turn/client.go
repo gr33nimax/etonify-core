@@ -644,7 +644,12 @@ func (c *Client) handleChannelData(data []byte) error {
 		return fmt.Errorf("%w: %d", errChannelBindNotFound, int(chData.Number))
 	}
 
-	c.log.Tracef("Channel data received from %s (ch=%d)", addr.String(), int(chData.Number))
+	// The address is handed over unformatted: pion's logger returns before it
+	// calls Sprintf when the level is below trace, and this client runs with
+	// logging disabled. Calling addr.String() here paid net.IP.String and
+	// net.JoinHostPort on every inbound relayed packet for a line nothing ever
+	// reads — measured on the Android client at about one percent of one core.
+	c.log.Tracef("Channel data received from %v (ch=%d)", addr, int(chData.Number))
 
 	relayedConn.HandleInbound(chData.Data, addr)
 

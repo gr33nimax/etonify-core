@@ -19,7 +19,7 @@ else in the tree has been touched, so a three-way merge against that commit is e
 
 ## Local changes
 
-All three are allocation removals, found by CPU/heap profiling the Android client. The first two
+All four are cost removals on the packet path, found by CPU/heap profiling the Android client. The first two
 are on the inbound packet path, where `handleChannelData` was the largest single allocation site
 in the process and `HandleInbound` the second; the third is the outbound counterpart.
 
@@ -61,6 +61,19 @@ allocation for anything larger, which never enters the pool. `Client.WriteTo` ha
 straight to the socket and retains nothing, so the release point is immediately after it returns —
 on the error path as well, since the frame is dead either way. A buffer that `Encode` had to grow
 anyway is not returned, which is why the capacity is checked rather than the length.
+
+### 4. `client.go` — the inbound trace no longer formats an address
+
+Was: `c.log.Tracef("Channel data received from %s (ch=%d)", addr.String(), ...)`.
+
+Arguments are evaluated before the call, so `net.IP.String` and `net.JoinHostPort` ran on
+every inbound relayed packet — and this client is constructed with `LogLevelDisabled`, so the
+line was never emitted. Measured on the Android client at about one percent of one core plus
+roughly 2.5 MB of allocation over a one-minute download.
+
+The address is passed as `%v` instead. `DefaultLeveledLogger.logf` returns before it reaches
+`fmt.Sprintf` when the level is below trace, so the formatting is skipped entirely while the
+trace still works for anyone who turns it on.
 
 ## Verification
 
