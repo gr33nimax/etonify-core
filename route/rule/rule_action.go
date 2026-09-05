@@ -399,10 +399,18 @@ func (r *RuleActionReject) Error(ctx context.Context) error {
 	r.dropAccess.Lock()
 	defer r.dropAccess.Unlock()
 	timeNow := time.Now()
-	r.dropCounter = common.Filter(r.dropCounter, func(t time.Time) bool {
-		return timeNow.Sub(t) <= 30*time.Second
-	})
-	r.dropCounter = append(r.dropCounter, timeNow)
+	// Compacted in place. This runs on every rejected packet, and common.Filter
+	// starts from a nil slice and grows, so it allocated and copied the whole
+	// window each time: profiled on the Android client during a download it was
+	// a third of every allocation in the process. Reusing the backing array
+	// keeps the same window with no allocation in the steady state.
+	kept := r.dropCounter[:0]
+	for _, dropTime := range r.dropCounter {
+		if timeNow.Sub(dropTime) <= 30*time.Second {
+			kept = append(kept, dropTime)
+		}
+	}
+	r.dropCounter = append(kept, timeNow)
 	if len(r.dropCounter) > 50 {
 		if ctx != nil {
 			r.logger.DebugContext(ctx, "dropped due to flooding")
