@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v1.13.16-extended-hydracore.11-debug.58
+
+- Removed two per-packet costs found by profiling the Android client: the reject
+  rule's flood window is compacted in place instead of being reallocated on every
+  rejected packet, and the TURN client no longer formats a peer address for a
+  trace line that its disabled logger never emits.
+
+## v1.13.16-extended-hydracore.11-debug.57
 
 - Removed the retired VK parasite telemetry collectors, reports, wire hooks, and capability flag.
 - `vk_parasite` protocol 10: removed the DTLS layer from the Call path. Worker
