@@ -38,6 +38,15 @@ type disabledFactoryState struct {
 
 func newDisabledFactory(options Options) *disabledFactory { return &disabledFactory{options: options} }
 
+// install puts an already-built factory in place, as the enabled half of New does. Only New
+// calls it; Enable builds its own.
+func (f *disabledFactory) install(active Factory) {
+	f.access.Lock()
+	defer f.access.Unlock()
+	f.counter++
+	f.active.Store(&disabledFactoryState{factory: active, revision: f.counter})
+}
+
 func (f *disabledFactory) Start() error {
 	f.access.Lock()
 	defer f.access.Unlock()

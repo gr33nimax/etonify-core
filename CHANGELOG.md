@@ -16,8 +16,9 @@
   instead of raising a transport.
 - `SetLogLevel` understands `off` as its own instruction — not the quietest
   level — releasing a factory that was enabled after a disabled start, and a
-  closed factory stays closed. A suppressed line through the enabled wrapper
-  costs what an ordinary logger's line costs.
+  closed factory stays closed. Every factory New hands out is the switchable
+  one now, so a core that started at DEBUG can also be turned off at runtime;
+  a suppressed line through it costs what an ordinary logger's line costs.
 - A `urltest` group refuses a `probe_timeout` or `probe_concurrency` it cannot
   honour at configuration time instead of panicking in a goroutine the start
   had already launched; the concurrency ceiling is 256.

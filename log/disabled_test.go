@@ -52,9 +52,10 @@ func TestDisabledFactoryEnablesExistingLogger(t *testing.T) {
 
 // A suppressed line through the enabled wrapper must cost what an ordinary logger's line
 // costs: the delegate is resolved once and reused, not rebuilt per call on top of the line.
+// The baseline is the raw factory, since every factory New hands out is the switchable one.
 func TestEnabledDisabledLoggerAllocatesLikeAnOrdinaryLogger(t *testing.T) {
 	writer := new(recordingPlatformWriter)
-	ordinary, err := New(Options{
+	ordinary, err := newActiveFactory(Options{
 		Context:        context.Background(),
 		Options:        option.LogOptions{Level: "error"},
 		PlatformWriter: writer,
@@ -121,4 +122,34 @@ func TestClosedFactoryCannotBeResurrected(t *testing.T) {
 	logger.Error("after close")
 	require.Equal(t, 0, writer.count(), "a logger wrote through a closed factory")
 	require.NoError(t, factory.Close(), "closing twice is not an error")
+}
+
+// OFF is not reserved for a core that started with it: a core that started at DEBUG is the
+// one whose OFF has the most to release, and refusing it there left the app able to turn
+// logging up on a running tunnel but never back down.
+func TestAFactoryStartedEnabledCanTurnOffAndBackOn(t *testing.T) {
+	writer := new(recordingPlatformWriter)
+	factory, err := New(Options{
+		Context:        context.Background(),
+		Options:        option.LogOptions{Level: "debug"},
+		PlatformWriter: writer,
+	})
+	require.NoError(t, err)
+
+	logger := factory.NewLogger("test")
+	logger.Error("while on")
+	require.Equal(t, 1, writer.count())
+
+	require.NoError(t, factory.(*disabledFactory).Disable(), "a started-enabled factory refused OFF")
+	logger.Error("while off")
+	require.Equal(t, 1, writer.count(), "a line was written after OFF")
+
+	require.NoError(t, factory.(*disabledFactory).Enable(LevelError))
+	logger.Error("on again")
+	require.Equal(t, 2, writer.count(), "a logger that lived through OFF→ON lost its delegate")
+
+	// The command server's wire word goes through the same two methods.
+	factory.SetLevel(LevelDebug)
+	logger.Debug("debug passes at debug")
+	require.Equal(t, 3, writer.count())
 }
