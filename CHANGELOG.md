@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Keep `vk_parasite` workers alive across network rebinds, reject paths dialled for
+  an old network, and keep startup pending until every initial worker reports.
+- Refresh cached VK credentials only after a confirmed TURN authentication
+  rejection, redact join credentials from logs, and propagate URL-test request
+  cancellation to active probes.
+- The automatic `urltest` group accepts `probe_timeout` and `probe_concurrency`,
+  reported through the `urltest_probe_budget` capability; a client without the
+  flag keeps the built-in budget of ten parallel probes.
+- The TURN edge a transport last reached is kept across processes and readable
+  through `HydraCoreTurnEdgeEndpoint`, reported as the `turn_edge_endpoint`
+  capability, so a client can measure the edge with a single STUN Binding
+  instead of raising a transport.
+
+
 ## v1.13.16-extended-hydracore.11-debug.58
 
 - Removed two per-packet costs found by profiling the Android client: the reject
