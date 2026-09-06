@@ -30,17 +30,24 @@ func TestTurnEdgeEndpointSurvivesTheProcessThatRecordedIt(t *testing.T) {
 	require.Equal(t, "udp://turn.example.invalid:3478", TurnEdgeEndpoint())
 }
 
-func TestTurnEdgeEndpointRecordsOnlyTheLatest(t *testing.T) {
+// The reader is usually not the process that recorded the edge. A first empty answer must
+// not be remembered as permanent, and a later recording by another process must be visible
+// to the next question, not only to the process that wrote it.
+func TestTurnEdgeEndpointSeesALaterProcessWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "turn_edge.json")
 	resetTurnEdgeStore()
 	SetTurnEdgeStorePath(path)
 
-	RecordTurnEdgeEndpoint("udp://first.example.invalid:3478")
-	RecordTurnEdgeEndpoint("tcp://second.example.invalid:3478")
+	require.Empty(t, TurnEdgeEndpoint(), "an absent file is no edge, not an error")
 
-	resetTurnEdgeStore()
-	SetTurnEdgeStorePath(path)
-	require.Equal(t, "tcp://second.example.invalid:3478", TurnEdgeEndpoint())
+	RecordTurnEdgeEndpoint("udp://first.example.invalid:3478")
+	require.Equal(t, "udp://first.example.invalid:3478", TurnEdgeEndpoint())
+
+	// Another process rotates the edge underneath this one.
+	record := `{"endpoint":"tcp://second.example.invalid:3478","updated_at":2}`
+	require.NoError(t, os.WriteFile(path, []byte(record), 0o644))
+	require.Equal(t, "tcp://second.example.invalid:3478", TurnEdgeEndpoint(),
+		"the first read is not remembered forever")
 }
 
 func TestTurnEdgeEndpointStaysEmptyWhenNothingWasEverRecorded(t *testing.T) {

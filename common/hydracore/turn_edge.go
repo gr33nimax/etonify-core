@@ -25,7 +25,6 @@ type turnEdgeStore struct {
 	mu       sync.RWMutex
 	endpoint string
 	path     string
-	loaded   bool
 }
 
 var turnEdge turnEdgeStore
@@ -48,7 +47,6 @@ func RecordTurnEdgeEndpoint(endpoint string) {
 	turnEdge.mu.Lock()
 	defer turnEdge.mu.Unlock()
 	turnEdge.endpoint = endpoint
-	turnEdge.loaded = true
 	if turnEdge.path == "" {
 		return
 	}
@@ -68,26 +66,32 @@ func RecordTurnEdgeEndpoint(endpoint string) {
 	_ = os.Rename(temporary, turnEdge.path)
 }
 
-// TurnEdgeEndpoint answers the endpoint a transport last reached, from memory or from the
-// file a previous process wrote. Empty means no transport has ever recorded one.
+// TurnEdgeEndpoint answers the endpoint a transport last reached. The file is re-read on
+// every call when one is configured: the caller is usually a different process than the one
+// that recorded the edge, and it may have recorded it after this process first looked, so a
+// first empty answer must not be remembered as permanent. The file is a few dozen bytes;
+// callers ask when a screen opens, not per packet. Empty means no transport has ever
+// recorded an edge.
 func TurnEdgeEndpoint() string {
 	turnEdge.mu.Lock()
-	defer turnEdge.mu.Unlock()
-	if turnEdge.endpoint == "" && !turnEdge.loaded && turnEdge.path != "" {
-		turnEdge.loaded = true
-		if content, err := os.ReadFile(turnEdge.path); err == nil {
-			var record turnEdgeRecord
-			if json.Unmarshal(content, &record) == nil {
-				turnEdge.endpoint = record.Endpoint
-			}
+	path := turnEdge.path
+	turnEdge.mu.Unlock()
+	if path == "" {
+		turnEdge.mu.RLock()
+		defer turnEdge.mu.RUnlock()
+		return turnEdge.endpoint
+	}
+	if content, err := os.ReadFile(path); err == nil {
+		var record turnEdgeRecord
+		if json.Unmarshal(content, &record) == nil && record.Endpoint != "" {
+			return record.Endpoint
 		}
 	}
-	return turnEdge.endpoint
+	return ""
 }
 
 func resetTurnEdgeStore() {
 	turnEdge.mu.Lock()
 	turnEdge.endpoint = ""
-	turnEdge.loaded = false
 	turnEdge.mu.Unlock()
 }
