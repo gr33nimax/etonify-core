@@ -36,7 +36,15 @@ type FeatureSet struct {
 	CallVKParasiteClient         bool `json:"call_vk_parasite_client"`
 	CallVKParasiteServer         bool `json:"call_vk_parasite_server"`
 	VKAuthChallenges             bool `json:"vk_auth_challenges"`
-	AmneziaVersion               int  `json:"amnezia_version"`
+	RuntimeLogLevel              bool `json:"runtime_log_level"`
+	// The automatic group accepts `probe_timeout` and `probe_concurrency`; a client that
+	// cannot see this flag must not emit them, because an older core rejects the whole
+	// configuration over unknown fields.
+	URLTestProbeBudget bool `json:"urltest_probe_budget"`
+	// The last reached TURN edge is readable through HydraCoreTurnEdgeEndpoint, so a client
+	// can measure the edge with one STUN Binding instead of raising a transport for it.
+	TurnEdgeEndpoint bool `json:"turn_edge_endpoint"`
+	AmneziaVersion   int  `json:"amnezia_version"`
 }
 
 type ProtocolSet struct {
@@ -123,7 +131,17 @@ func Capabilities() CapabilitySet {
 			CallVKParasiteClient:         callClientEnabled,
 			CallVKParasiteServer:         callServerEnabled,
 			VKAuthChallenges:             callClientEnabled,
-			AmneziaVersion:               3,
+			// The level may be changed on a running core, including up from a start that was
+			// configured with logging off. A client that cannot see this flag must assume a
+			// restart is needed, because on an older core the call is accepted and does nothing.
+			RuntimeLogLevel: true,
+			// The automatic group honours the client's probe budget. Gated the same way: a
+			// client that cannot see this flag must keep the fields out of its configuration.
+			URLTestProbeBudget: true,
+			// An older core has no HydraCoreTurnEdgeEndpoint to call; a client that cannot
+			// see this flag must expect nothing from the probe and say "not measured".
+			TurnEdgeEndpoint: true,
+			AmneziaVersion:   3,
 		},
 		Protocols: ProtocolSet{
 			Inbounds:      append([]string(nil), safeInboundTypes...),

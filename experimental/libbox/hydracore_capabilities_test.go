@@ -26,6 +26,13 @@ func TestHydraCoreCapabilities(t *testing.T) {
 	require.True(t, capabilities.Features.ManagedURLTestSessions)
 	require.True(t, capabilities.Features.SubscriptionJWE)
 	require.True(t, capabilities.Features.Rmux)
+	// The client only offers to raise the level on a live core when this says it will take effect.
+	require.True(t, capabilities.Features.RuntimeLogLevel)
+	// The client only puts probe_timeout/probe_concurrency into the automatic group's
+	// configuration when this says the core will honour them.
+	require.True(t, capabilities.Features.URLTestProbeBudget)
+	// The workerless edge probe reads its address through HydraCoreTurnEdgeEndpoint.
+	require.True(t, capabilities.Features.TurnEdgeEndpoint)
 	require.Equal(t, 3, capabilities.Features.AmneziaVersion)
 	require.Equal(t, []string{"local", "remote_v2"}, capabilities.ValidationProfiles)
 	require.Equal(t, []int{2}, capabilities.SubscriptionContracts)
