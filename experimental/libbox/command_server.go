@@ -204,18 +204,28 @@ func (s *CommandServer) NeedWIFIState() bool {
 // The level decides two things now: what the core formats and writes, and whether the platform
 // keeps its log stream subscribed at all. Both used to need a restart of the tunnel to change,
 // which is the wrong price for turning the detail up on a fault that is happening right now.
+//
+// "off" is not the quietest level; it is the one setting that removes the cost of formatting
+// lines nobody reads. On a factory that can be enabled after a disabled start it also has to
+// work in reverse: OFF→OFF leaves nothing built, ON→OFF tears the built factory down again.
 func (s *CommandServer) SetLogLevel(level string) error {
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.Box() == nil {
 		return E.New("service is not running")
 	}
-	parsed, err := log.ParseLevel(level)
-	if err != nil {
-		return err
-	}
 	factory := instance.Box().LogFactory()
 	if factory == nil {
 		return E.New("no log factory")
+	}
+	if level == "off" || level == "disabled" {
+		if disabler, ok := factory.(interface{ Disable() error }); ok {
+			return disabler.Disable()
+		}
+		return E.New("this core cannot turn its log factory off at runtime")
+	}
+	parsed, err := log.ParseLevel(level)
+	if err != nil {
+		return err
 	}
 	if disabled, ok := factory.(interface{ Enable(log.Level) error }); ok {
 		return disabled.Enable(parsed)
