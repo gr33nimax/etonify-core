@@ -151,6 +151,9 @@ func (c *Client) DialPath(ctx context.Context, workerID uint16) (*quic.Conn, io.
 	allocation, err := allocateTURN(ctx, c.options.Dialer, c.options.DNSRouter, credentials, int(workerID))
 	releaseTURN()
 	if err != nil {
+		if isTURNCredentialError(err) && c.options.InvalidateCredentials != nil {
+			c.options.InvalidateCredentials(joinLink)
+		}
 		return nil, nil, fmt.Errorf("worker %d TURN allocate: %w", workerID, err)
 	}
 	codec, err := newRTPCodec(c.key)

@@ -313,3 +313,37 @@ func TestKeepAlivePeriodLeavesRoomForRetries(t *testing.T) {
 	require.Greater(t, idleTimeout, quicKeepAlivePeriod)
 	require.LessOrEqual(t, 2*quicKeepAlivePeriod, idleTimeout)
 }
+
+func TestAuditRebindDuringReconnectBackoffRestartsWorker(t *testing.T) {
+	attempts := make(chan struct{}, 8)
+	relay := NewQUICRelay(t.Context(), QUICRelayOptions{
+		PathCount: 1,
+		DialPath: func(ctx context.Context, _ uint16) (*quic.Conn, io.Closer, error) {
+			attempts <- struct{}{}
+			return nil, nil, io.ErrUnexpectedEOF
+		},
+	})
+	defer relay.Close()
+	go relay.reconnectPath(0)
+	<-attempts
+	relay.RebindNetwork(1)
+	select {
+	case <-attempts:
+	case <-time.After(time.Second):
+		t.Fatal("no replacement dial after rebind during reconnect backoff")
+	}
+}
+
+func TestStaleDialCannotJoinNewNetworkGeneration(t *testing.T) {
+	relay := NewQUICRelay(t.Context(), QUICRelayOptions{})
+	defer relay.Close()
+	oldGeneration := relay.currentGenerationContext()
+	cancelled := false
+	path := &quicPathConn{cancel: func() { cancelled = true }}
+
+	relay.RebindNetwork(1)
+
+	require.False(t, relay.addCurrentPath(path, oldGeneration))
+	require.True(t, cancelled)
+	require.Equal(t, 0, relay.ActivePaths())
+}

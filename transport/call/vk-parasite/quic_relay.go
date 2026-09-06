@@ -92,6 +92,7 @@ type QUICRelay struct {
 	logger                   logger.ContextLogger
 	dialPath                 func(ctx context.Context, workerID uint16) (*quic.Conn, io.Closer, error)
 	pathCount                int
+	initialPending           atomic.Int32
 	nextPath                 atomic.Uint64
 	onAccept                 atomic.Pointer[func(net.Conn, string)]
 	onPathsChanged           atomic.Pointer[func()]
@@ -131,6 +132,7 @@ func (r *QUICRelay) Start() {
 	if r.dialPath == nil {
 		return
 	}
+	r.initialPending.Store(int32(r.pathCount))
 	for index := 0; index < r.pathCount; index++ {
 		workerID := uint16(index)
 		go func(id uint16) {
@@ -140,6 +142,7 @@ func (r *QUICRelay) Start() {
 }
 
 func (r *QUICRelay) initPath(workerID uint16) {
+	defer func() { r.initialPending.Add(-1); r.notifyPathsChanged() }()
 	if r.closed.Load() {
 		return
 	}
@@ -149,7 +152,8 @@ func (r *QUICRelay) initPath(workerID uint16) {
 	if err != nil {
 		pathCancel()
 		if r.logger != nil {
-			r.logger.Warn("call vk_parasite: path connect failed for worker ", workerID, ": ", err)
+			failure := transportFailure(err)
+			r.logger.Warn("call vk_parasite: path connect failed for worker ", workerID, ": ", failure.Domain, "/", failure.Kind, "/", failure.Code)
 		}
 		var outcome *dialOutcome
 		if errors.As(err, &outcome) && outcome.failure != nil && outcome.failure.Terminal {
@@ -164,13 +168,41 @@ func (r *QUICRelay) initPath(workerID uint16) {
 		closer: closer,
 		cancel: pathCancel,
 	}
-	r.addPath(path)
+	if !r.addCurrentPath(path, generationCtx) {
+		go r.reconnectPath(workerID)
+	}
+}
+
+// Admit a dial only while its network generation is still current.
+func (r *QUICRelay) addCurrentPath(path *quicPathConn, generationCtx context.Context) bool {
+	r.pathsMu.Lock()
+	if r.closed.Load() || generationCtx != r.generationCtx || generationCtx.Err() != nil {
+		r.pathsMu.Unlock()
+		if path.cancel != nil {
+			path.cancel()
+		}
+		if path.conn != nil {
+			_ = path.conn.CloseWithError(0, "")
+		}
+		if path.closer != nil {
+			_ = path.closer.Close()
+		}
+		return false
+	}
+	r.paths = append(r.paths, path)
+	r.pathsMu.Unlock()
+	r.startPath(path)
+	return true
 }
 
 func (r *QUICRelay) addPath(path *quicPathConn) {
 	r.pathsMu.Lock()
 	r.paths = append(r.paths, path)
 	r.pathsMu.Unlock()
+	r.startPath(path)
+}
+
+func (r *QUICRelay) startPath(path *quicPathConn) {
 	r.notifyPathsChanged()
 
 	go r.watchPath(path)
@@ -235,8 +267,10 @@ func (r *QUICRelay) reconnectPath(workerID uint16) {
 				closer: closer,
 				cancel: pathCancel,
 			}
-			r.addPath(path)
-			return
+			if r.addCurrentPath(path, generationCtx) {
+				return
+			}
+			continue
 		}
 		pathCancel()
 		var outcome *dialOutcome
@@ -246,7 +280,8 @@ func (r *QUICRelay) reconnectPath(workerID uint16) {
 		select {
 		case <-time.After(backoff):
 		case <-generationCtx.Done():
-			return
+			backoff = 500 * time.Millisecond
+			continue
 		}
 		if backoff < 5*time.Second {
 			backoff *= 2
@@ -433,10 +468,8 @@ func (r *QUICRelay) RebindNetwork(generation ...uint64) {
 			}
 		}
 	}
-	r.pathsMu.RLock()
-	paths := append([]*quicPathConn(nil), r.paths...)
-	r.pathsMu.RUnlock()
 	r.pathsMu.Lock()
+	paths := append([]*quicPathConn(nil), r.paths...)
 	r.generationCancel()
 	r.generationCtx, r.generationCancel = context.WithCancel(r.ctx)
 	r.pathsMu.Unlock()
@@ -459,6 +492,10 @@ func (r *QUICRelay) ActivePaths() int {
 	r.pathsMu.RLock()
 	defer r.pathsMu.RUnlock()
 	return len(r.paths)
+}
+
+func (r *QUICRelay) initialPathsPending() bool {
+	return r.initialPending.Load() > 0
 }
 
 // SmoothedRTT is the mean RTT reported by active QUIC paths. A zero value means

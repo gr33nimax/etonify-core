@@ -36,6 +36,24 @@ func TestHealthSnapshotKeepsInitialControlPlaneFailureDistinct(t *testing.T) {
 	require.Empty(t, health.Failure.ChallengeID)
 }
 
+func TestHealthSnapshotWaitsForAllInitialPathsBeforeFailing(t *testing.T) {
+	relay := &QUICRelay{}
+	relay.initialPending.Store(3)
+	client := &Client{
+		options: ClientOptions{Workers: DefaultWorkerCount},
+		relay:   relay,
+	}
+	client.recordPathFailure(errors.New("first worker failed"))
+
+	health := client.healthSnapshot(time.Now())
+	require.Equal(t, HC.TransportStateStarting, health.State)
+	require.NotNil(t, health.Failure)
+
+	relay.initialPending.Store(0)
+	health = client.healthSnapshot(time.Now())
+	require.Equal(t, HC.TransportStateFailed, health.State)
+}
+
 func TestHealthSnapshotOmitsFailureWithActiveLanes(t *testing.T) {
 	client := &Client{
 		options: ClientOptions{Workers: DefaultWorkerCount},

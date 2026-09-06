@@ -193,6 +193,10 @@ func (c *Client) healthSnapshot(now time.Time) HC.TransportHealthSnapshot {
 		health.State = HC.TransportStateHealthy
 	case activePaths > 0:
 		health.State = HC.TransportStateDegraded
+	case c.relay != nil && c.relay.initialPathsPending():
+		// A fast first failure must not finish startup while sibling workers are
+		// still making their initial attempts.
+		health.State = HC.TransportStateStarting
 	case c.lastFailure.Load() != nil:
 		health.State = HC.TransportStateFailed
 	case !c.sawPath.Load():
