@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/stretchr/testify/require"
 )
 
 type recordingPlatformWriter struct {
@@ -24,27 +25,100 @@ func (w *recordingPlatformWriter) count() int {
 	return len(w.messages)
 }
 
+func newDisabledFactoryForTest(t *testing.T, writer *recordingPlatformWriter) Factory {
+	t.Helper()
+	factory, err := New(Options{
+		Context:        context.Background(),
+		Options:        option.LogOptions{Disabled: true},
+		PlatformWriter: writer,
+	})
+	require.NoError(t, err)
+	return factory
+}
+
 func TestDisabledFactoryEnablesExistingLogger(t *testing.T) {
 	writer := new(recordingPlatformWriter)
-	factory, err := New(Options{Context: context.Background(), Options: option.LogOptions{Disabled: true}, PlatformWriter: writer})
-	if err != nil {
-		t.Fatal(err)
-	}
+	factory := newDisabledFactoryForTest(t, writer)
 	logger := factory.NewLogger("test")
 	logger.Error("before")
-	if writer.count() != 0 {
-		t.Fatal("disabled factory wrote a line")
-	}
-	if err = factory.(*disabledFactory).Enable(LevelError); err != nil {
-		t.Fatal(err)
-	}
+	require.Equal(t, 0, writer.count(), "disabled factory wrote a line")
+	require.NoError(t, factory.(*disabledFactory).Enable(LevelError))
 	logger.Error("after")
-	if writer.count() != 1 {
-		t.Fatal("existing logger did not use the enabled factory")
-	}
+	require.Equal(t, 1, writer.count(), "existing logger did not use the enabled factory")
 	factory.SetLevel(LevelPanic)
 	logger.Error("off again")
-	if writer.count() != 1 {
-		t.Fatal("quiet level wrote after logging was turned off")
-	}
+	require.Equal(t, 1, writer.count(), "quiet level wrote after logging was turned off")
+}
+
+// A suppressed line through the enabled wrapper must cost what an ordinary logger's line
+// costs: the delegate is resolved once and reused, not rebuilt per call on top of the line.
+func TestEnabledDisabledLoggerAllocatesLikeAnOrdinaryLogger(t *testing.T) {
+	writer := new(recordingPlatformWriter)
+	ordinary, err := New(Options{
+		Context:        context.Background(),
+		Options:        option.LogOptions{Level: "error"},
+		PlatformWriter: writer,
+	})
+	require.NoError(t, err)
+
+	wrappedFactory := newDisabledFactoryForTest(t, writer)
+	require.NoError(t, wrappedFactory.(*disabledFactory).Enable(LevelError))
+	wrapped := wrappedFactory.NewLogger("test")
+
+	ordinaryLogger := ordinary.NewLogger("test")
+	ordinaryAllocations := testing.AllocsPerRun(1000, func() { ordinaryLogger.Debug("suppressed") })
+	wrappedAllocations := testing.AllocsPerRun(1000, func() { wrapped.Debug("suppressed") })
+	require.Equal(t, ordinaryAllocations, wrappedAllocations,
+		"a suppressed line through the enabled wrapper allocates more than an ordinary logger's")
+}
+
+// The disabled fast path costs no more than the one variadic slice every call builds: no
+// lock, no logger construction, no state. (The NOP factory reaches zero only because its
+// empty methods inline away entirely.) It is the path every line of a start with logging
+// off runs through.
+func TestDisabledFastPathCostsNoMoreThanTheArgumentsSlice(t *testing.T) {
+	writer := new(recordingPlatformWriter)
+	factory := newDisabledFactoryForTest(t, writer)
+	logger := factory.NewLogger("test")
+	require.LessOrEqual(t, testing.AllocsPerRun(1000, func() { logger.Debug("suppressed") }), float64(1))
+}
+
+func TestDisabledFactoryDisableReleasesTheActiveOne(t *testing.T) {
+	writer := new(recordingPlatformWriter)
+	factory := newDisabledFactoryForTest(t, writer).(*disabledFactory)
+	logger := factory.NewLogger("test")
+
+	// OFF on a factory that never came on is a no-op, not a first enable.
+	require.NoError(t, factory.Disable())
+	require.Nil(t, factory.active.Load(), "OFF built a factory where none was needed")
+
+	require.NoError(t, factory.Enable(LevelError))
+	logger.Error("while on")
+	require.Equal(t, 1, writer.count())
+
+	require.NoError(t, factory.Disable())
+	require.Nil(t, factory.active.Load(), "ON→OFF left the factory built")
+	logger.Error("while off")
+	require.Equal(t, 1, writer.count(), "a line was written after the factory was disabled")
+
+	// And back on again: the cached delegate must not survive the transition.
+	require.NoError(t, factory.Enable(LevelError))
+	logger.Error("on again")
+	require.Equal(t, 2, writer.count(), "a logger that lived through disable→enable lost its delegate")
+}
+
+func TestClosedFactoryCannotBeResurrected(t *testing.T) {
+	writer := new(recordingPlatformWriter)
+	factory := newDisabledFactoryForTest(t, writer).(*disabledFactory)
+	logger := factory.NewLogger("test")
+
+	require.NoError(t, factory.Enable(LevelError))
+	require.NoError(t, factory.Close())
+
+	require.ErrorIs(t, factory.Enable(LevelError), ErrClosed, "a closed factory was resurrected by Enable")
+	require.ErrorIs(t, factory.Disable(), ErrClosed, "a closed factory was resurrected by Disable")
+	require.ErrorIs(t, factory.Start(), ErrClosed)
+	logger.Error("after close")
+	require.Equal(t, 0, writer.count(), "a logger wrote through a closed factory")
+	require.NoError(t, factory.Close(), "closing twice is not an error")
 }
