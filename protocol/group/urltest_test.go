@@ -2,13 +2,17 @@ package group
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/interrupt"
 	U "github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/stretchr/testify/require"
@@ -27,6 +31,198 @@ func (o *urlTestSelectionOutbound) DialContext(context.Context, string, M.Socksa
 }
 func (o *urlTestSelectionOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
 	return nil, net.ErrClosed
+}
+
+type urlTestOutboundManager struct {
+	adapter.OutboundManager
+	outbound adapter.Outbound
+}
+
+func (m *urlTestOutboundManager) Outbound(string) (adapter.Outbound, bool) {
+	return m.outbound, true
+}
+
+type cancellationObservingOutbound struct {
+	urlTestSelectionOutbound
+	started   chan struct{}
+	cancelled chan struct{}
+}
+
+func (o *cancellationObservingOutbound) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
+	close(o.started)
+	<-ctx.Done()
+	close(o.cancelled)
+	return nil, ctx.Err()
+}
+
+// countingOutbound records how many probes are inside DialContext at once, which is the
+// only place a concurrency budget can be observed from outside the group.
+type countingOutbound struct {
+	urlTestSelectionOutbound
+	access  *sync.Mutex
+	running *int
+	peak    *int
+	dials   *int
+}
+
+func (o *countingOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
+	o.access.Lock()
+	*o.dials++
+	*o.running++
+	if *o.running > *o.peak {
+		*o.peak = *o.running
+	}
+	o.access.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	o.access.Lock()
+	*o.running--
+	o.access.Unlock()
+	return nil, net.ErrClosed
+}
+
+func TestURLTestRequestCancellationStopsChildProbe(t *testing.T) {
+	groupCtx, stopGroup := context.WithCancel(t.Context())
+	defer stopGroup()
+	outbound := &cancellationObservingOutbound{
+		urlTestSelectionOutbound: urlTestSelectionOutbound{tag: "blocking"},
+		started:                  make(chan struct{}),
+		cancelled:                make(chan struct{}),
+	}
+	manager := &urlTestOutboundManager{outbound: outbound}
+	group, err := NewURLTestGroup(
+		groupCtx,
+		manager,
+		log.NewNOPFactory().Logger(),
+		[]adapter.Outbound{outbound},
+		"http://example.invalid/",
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+	)
+	require.NoError(t, err)
+
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		_, _ = group.URLTest(requestCtx)
+		close(done)
+	}()
+	<-outbound.started
+	cancelRequest()
+
+	select {
+	case <-outbound.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("request cancellation did not reach the active URL-test probe")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("URL-test did not return after request cancellation")
+	}
+}
+
+func TestURLTestProbeTimeoutBoundsTheChildProbe(t *testing.T) {
+	groupCtx, stopGroup := context.WithCancel(t.Context())
+	defer stopGroup()
+	outbound := &cancellationObservingOutbound{
+		urlTestSelectionOutbound: urlTestSelectionOutbound{tag: "blocking"},
+		started:                  make(chan struct{}),
+		cancelled:                make(chan struct{}),
+	}
+	manager := &urlTestOutboundManager{outbound: outbound}
+	probeTimeout := 100 * time.Millisecond
+	group, err := NewURLTestGroup(
+		groupCtx,
+		manager,
+		log.NewNOPFactory().Logger(),
+		[]adapter.Outbound{outbound},
+		"http://example.invalid/",
+		0,
+		0,
+		0,
+		probeTimeout,
+		0,
+		false,
+	)
+	require.NoError(t, err)
+
+	started := time.Now()
+	_, _ = group.URLTest(t.Context())
+
+	select {
+	case <-outbound.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("the probe timeout did not reach the child probe")
+	}
+	require.Less(t, time.Since(started), time.Second, "the group waited past its probe timeout")
+	require.Equal(t, probeTimeout, group.probeTimeout)
+}
+
+func TestURLTestProbeConcurrencyLimitsParallelProbes(t *testing.T) {
+	groupCtx, stopGroup := context.WithCancel(t.Context())
+	defer stopGroup()
+	const probeCount = 4
+	var access sync.Mutex
+	running := 0
+	peak := 0
+	dials := 0
+	counting := &countingOutbound{
+		urlTestSelectionOutbound: urlTestSelectionOutbound{tag: "counting"},
+		access:                   &access,
+		running:                  &running,
+		peak:                     &peak,
+		dials:                    &dials,
+	}
+	outbounds := make([]adapter.Outbound, probeCount)
+	for i := range outbounds {
+		outbounds[i] = &urlTestSelectionOutbound{tag: fmt.Sprintf("probe-%d", i)}
+	}
+	manager := &urlTestOutboundManager{outbound: counting}
+	group, err := NewURLTestGroup(
+		groupCtx,
+		manager,
+		log.NewNOPFactory().Logger(),
+		outbounds,
+		"http://example.invalid/",
+		0,
+		0,
+		0,
+		0,
+		2,
+		false,
+	)
+	require.NoError(t, err)
+
+	_, _ = group.URLTest(t.Context())
+
+	access.Lock()
+	observedPeak, observedDials := peak, dials
+	access.Unlock()
+	require.Equal(t, probeCount, observedDials, "not every member of the group was probed")
+	require.LessOrEqual(t, observedPeak, 2, "more probes ran at once than the concurrency budget allows")
+}
+
+func TestURLTestProbeBudgetDefaults(t *testing.T) {
+	group, err := NewURLTestGroup(
+		t.Context(),
+		&urlTestOutboundManager{outbound: &urlTestSelectionOutbound{tag: "default"}},
+		log.NewNOPFactory().Logger(),
+		[]adapter.Outbound{&urlTestSelectionOutbound{tag: "default"}},
+		"http://example.invalid/",
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+	)
+	require.NoError(t, err)
+	require.Equal(t, C.TCPTimeout, group.probeTimeout)
+	require.Equal(t, 10, group.probeConcurrency)
 }
 
 func TestURLTestSelectionIgnoresUnavailableHistory(t *testing.T) {

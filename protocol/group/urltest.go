@@ -44,6 +44,8 @@ type URLTest struct {
 	interval                     time.Duration
 	tolerance                    uint16
 	idleTimeout                  time.Duration
+	probeTimeout                 time.Duration
+	probeConcurrency             int
 	group                        *URLTestGroup
 	interruptExternalConnections bool
 
@@ -70,6 +72,8 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		interval:                     time.Duration(options.Interval),
 		tolerance:                    options.Tolerance,
 		idleTimeout:                  time.Duration(options.IdleTimeout),
+		probeTimeout:                 time.Duration(options.ProbeTimeout),
+		probeConcurrency:             options.ProbeConcurrency,
 		interruptExternalConnections: options.InterruptExistConnections,
 
 		provider:       service.FromContext[adapter.ProviderManager](ctx),
@@ -120,7 +124,7 @@ func (s *URLTest) Start() error {
 		s.tags = append(s.tags, detour.Tag())
 		outbounds = append(outbounds, detour)
 	}
-	group, err := NewURLTestGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+	group, err := NewURLTestGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.tolerance, s.idleTimeout, s.probeTimeout, s.probeConcurrency, s.interruptExternalConnections)
 	if err != nil {
 		return err
 	}
@@ -309,6 +313,8 @@ type URLTestGroup struct {
 	interval                     time.Duration
 	tolerance                    uint16
 	idleTimeout                  time.Duration
+	probeTimeout                 time.Duration
+	probeConcurrency             int
 	history                      adapter.URLTestHistoryStorage
 	checking                     atomic.Bool
 	selectionAccess              sync.RWMutex
@@ -323,7 +329,7 @@ type URLTestGroup struct {
 	lastActive                   common.TypedValue[time.Time]
 }
 
-func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
+func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, probeTimeout time.Duration, probeConcurrency int, interruptExternalConnections bool) (*URLTestGroup, error) {
 	if interval == 0 {
 		interval = C.DefaultURLTestInterval
 	}
@@ -332,6 +338,12 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 	}
 	if idleTimeout == 0 {
 		idleTimeout = C.DefaultURLTestIdleTimeout
+	}
+	if probeTimeout == 0 {
+		probeTimeout = C.TCPTimeout
+	}
+	if probeConcurrency == 0 {
+		probeConcurrency = 10
 	}
 	if interval > idleTimeout {
 		return nil, E.New("interval must be less or equal than idle_timeout")
@@ -353,6 +365,8 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 		interval:                     interval,
 		tolerance:                    tolerance,
 		idleTimeout:                  idleTimeout,
+		probeTimeout:                 probeTimeout,
+		probeConcurrency:             probeConcurrency,
 		history:                      history,
 		close:                        make(chan struct{}),
 		pause:                        service.FromContext[pause.Manager](ctx),
@@ -484,7 +498,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		return result, nil
 	}
 	defer g.checking.Store(false)
-	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
+	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](g.probeConcurrency))
 	checked := make(map[string]bool)
 	var resultAccess sync.Mutex
 	for _, detour := range g.outbounds {
@@ -503,7 +517,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 			continue
 		}
 		b.Go(realTag, func() (any, error) {
-			testCtx, cancel := context.WithTimeout(g.ctx, C.TCPTimeout)
+			testCtx, cancel := context.WithTimeout(ctx, g.probeTimeout)
 			defer cancel()
 			t, err := urltest.URLTest(testCtx, g.link, p)
 			if err != nil {
