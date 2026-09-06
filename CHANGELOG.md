@@ -1,30 +1,31 @@
 # Changelog
 
-## Unreleased
+## v1.13.16-extended-hydracore.11-debug.59
 
 - Keep `vk_parasite` workers alive across network rebinds, reject paths dialled for
   an old network, and keep startup pending until every initial worker reports.
 - Refresh cached VK credentials only after a confirmed TURN authentication
   rejection, redact join credentials from logs, and propagate URL-test request
   cancellation to active probes.
+- A DoH resolver keeps its query string: the options carry `query` and
+  `force_query`, and both DoH transports build the resolver URL without mangling
+  the escaped path or the raw query. Reported through the `dns_query`
+  capability.
 - The automatic `urltest` group accepts `probe_timeout` and `probe_concurrency`,
   reported through the `urltest_probe_budget` capability; a client without the
-  flag keeps the built-in budget of ten parallel probes.
-- The TURN edge a transport last reached is kept across processes and readable
-  through `HydraCoreTurnEdgeEndpoint`, reported as the `turn_edge_endpoint`
-  capability, so a client can measure the edge with a single STUN Binding
-  instead of raising a transport.
+  flag keeps the built-in budget of ten parallel probes. A budget the group
+  cannot honour is refused at configuration time instead of panicking in a
+  goroutine the start had already launched; the concurrency ceiling is 256.
 - `SetLogLevel` understands `off` as its own instruction — not the quietest
   level — releasing a factory that was enabled after a disabled start, and a
   closed factory stays closed. Every factory New hands out is the switchable
   one now, so a core that started at DEBUG can also be turned off at runtime;
   a suppressed line through it costs what an ordinary logger's line costs.
-- A `urltest` group refuses a `probe_timeout` or `probe_concurrency` it cannot
-  honour at configuration time instead of panicking in a goroutine the start
-  had already launched; the concurrency ceiling is 256.
-- The TURN edge store answers from the file on every read, so an edge recorded
-  by a later process is visible to the next question. A DoH resolver's query
-  string is reported through the `dns_query` capability.
+- The TURN edge a transport last reached is kept across processes and readable
+  through `HydraCoreTurnEdgeEndpoint`, reported as the `turn_edge_endpoint`
+  capability, so a client can measure the edge with a single STUN Binding
+  instead of raising a transport. The store answers from the file on every
+  read, so an edge recorded by a later process is visible to the next question.
 
 
 ## v1.13.16-extended-hydracore.11-debug.58

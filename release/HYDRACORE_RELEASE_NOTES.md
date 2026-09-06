@@ -18,6 +18,22 @@ Transport health is part of the typed runtime stream. Reports carry the outbound
 tag and runtime generation; material state, challenge, lane, and failure changes
 wake the existing stream without JSON polling across JNI.
 
+debug.59 carries the runtime hardening from the September audit round. Workers
+survive a network rebind that lands while their reconnect sits in backoff, a
+dial completed for an old network generation is rejected instead of used, and
+the first path failure no longer ends startup while other initial attempts are
+still in flight. Cached TURN credentials are refreshed only after a confirmed
+authentication rejection, and join credentials never reach the ordinary log.
+
+Three client-facing abilities are new behind capability flags, so an older
+client paired with this core keeps its own behaviour: a DoH resolver keeps its
+query string (`dns_query`), the automatic `urltest` group honours the client's
+probe timeout and concurrency (`urltest_probe_budget`), and the TURN edge a
+transport last reached is readable across processes for a workerless
+reachability probe (`turn_edge_endpoint`). `SetLogLevel` understands `off` as
+its own instruction — every factory, including one that started at DEBUG, can
+be released at runtime and built again.
+
 The release contains separate Android client and Linux VPS runtimes. The VPS
 advertises `call_vk_parasite_server`; the client advertises
 `call_vk_parasite_client`; both advertise `call_vk_parasite_quic`.
