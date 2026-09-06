@@ -44,7 +44,11 @@ type FeatureSet struct {
 	// The last reached TURN edge is readable through HydraCoreTurnEdgeEndpoint, so a client
 	// can measure the edge with one STUN Binding instead of raising a transport for it.
 	TurnEdgeEndpoint bool `json:"turn_edge_endpoint"`
-	AmneziaVersion   int  `json:"amnezia_version"`
+	// A DoH resolver keeps its query string. A client that cannot see this flag must not
+	// accept or emit one: an older core refuses the whole configuration over the unknown
+	// `query` and `force_query` fields rather than ignoring them.
+	DNSQuery       bool `json:"dns_query"`
+	AmneziaVersion int  `json:"amnezia_version"`
 }
 
 type ProtocolSet struct {
@@ -141,7 +145,11 @@ func Capabilities() CapabilitySet {
 			// An older core has no HydraCoreTurnEdgeEndpoint to call; a client that cannot
 			// see this flag must expect nothing from the probe and say "not measured".
 			TurnEdgeEndpoint: true,
-			AmneziaVersion:   3,
+			// A DoH query string reaches the resolver on this core. An older one refuses
+			// the configuration over the unknown fields, so the client gates both its
+			// storage and its emission on this flag.
+			DNSQuery:       true,
+			AmneziaVersion: 3,
 		},
 		Protocols: ProtocolSet{
 			Inbounds:      append([]string(nil), safeInboundTypes...),

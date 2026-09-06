@@ -14,6 +14,16 @@
   through `HydraCoreTurnEdgeEndpoint`, reported as the `turn_edge_endpoint`
   capability, so a client can measure the edge with a single STUN Binding
   instead of raising a transport.
+- `SetLogLevel` understands `off` as its own instruction — not the quietest
+  level — releasing a factory that was enabled after a disabled start, and a
+  closed factory stays closed. A suppressed line through the enabled wrapper
+  costs what an ordinary logger's line costs.
+- A `urltest` group refuses a `probe_timeout` or `probe_concurrency` it cannot
+  honour at configuration time instead of panicking in a goroutine the start
+  had already launched; the concurrency ceiling is 256.
+- The TURN edge store answers from the file on every read, so an edge recorded
+  by a later process is visible to the next question. A DoH resolver's query
+  string is reported through the `dns_query` capability.
 
 
 ## v1.13.16-extended-hydracore.11-debug.58

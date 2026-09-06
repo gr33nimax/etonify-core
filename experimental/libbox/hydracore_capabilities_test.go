@@ -33,6 +33,9 @@ func TestHydraCoreCapabilities(t *testing.T) {
 	require.True(t, capabilities.Features.URLTestProbeBudget)
 	// The workerless edge probe reads its address through HydraCoreTurnEdgeEndpoint.
 	require.True(t, capabilities.Features.TurnEdgeEndpoint)
+	// A DoH resolver keeps its query string; without the flag the client must neither
+	// accept nor emit one.
+	require.True(t, capabilities.Features.DNSQuery)
 	require.Equal(t, 3, capabilities.Features.AmneziaVersion)
 	require.Equal(t, []string{"local", "remote_v2"}, capabilities.ValidationProfiles)
 	require.Equal(t, []int{2}, capabilities.SubscriptionContracts)
