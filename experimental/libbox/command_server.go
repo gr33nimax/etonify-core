@@ -217,6 +217,9 @@ func (s *CommandServer) SetLogLevel(level string) error {
 	if factory == nil {
 		return E.New("no log factory")
 	}
+	if disabled, ok := factory.(interface{ Enable(log.Level) error }); ok {
+		return disabled.Enable(parsed)
+	}
 	factory.SetLevel(parsed)
 	return nil
 }

@@ -23,7 +23,7 @@ func New(options Options) (Factory, error) {
 	logOptions := options.Options
 
 	if logOptions.Disabled {
-		return NewNOPFactory(), nil
+		return newDisabledFactory(options), nil
 	}
 
 	var logWriter io.Writer
