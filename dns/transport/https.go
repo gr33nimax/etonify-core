@@ -85,11 +85,7 @@ func NewHTTPS(ctx context.Context, logger log.ContextLogger, tag string, options
 	if options.ServerPort != 0 && options.ServerPort != 443 {
 		destinationURL.Host = net.JoinHostPort(destinationURL.Host, strconv.Itoa(int(options.ServerPort)))
 	}
-	path := options.Path
-	if path == "" {
-		path = "/dns-query"
-	}
-	err = sHTTP.URLSetPath(&destinationURL, path)
+	err = SetHTTPSDestinationPathAndQuery(&destinationURL, options.Path, options.Query, options.ForceQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +105,20 @@ func NewHTTPS(ctx context.Context, logger log.ContextLogger, tag string, options
 		serverAddr,
 		tlsConfig,
 	), nil
+}
+
+// SetHTTPSDestinationPathAndQuery applies the two URI components that a DoH endpoint owns.
+// URLSetPath preserves an escaped path, while RawQuery must stay separate or `?` is escaped.
+func SetHTTPSDestinationPathAndQuery(destination *url.URL, path, query string, forceQuery bool) error {
+	if path == "" {
+		path = "/dns-query"
+	}
+	if err := sHTTP.URLSetPath(destination, path); err != nil {
+		return err
+	}
+	destination.RawQuery = query
+	destination.ForceQuery = forceQuery
+	return nil
 }
 
 func NewHTTPSRaw(

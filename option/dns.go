@@ -279,8 +279,12 @@ func (o *DNSServerOptions) Upgrade(ctx context.Context) error {
 		if serverAddr.Port != 0 && serverAddr.Port != 443 {
 			httpsOptions.ServerPort = serverAddr.Port
 		}
-		if serverURL.Path != "/dns-query" {
-			httpsOptions.Path = serverURL.Path
+		if serverURL.EscapedPath() != "/dns-query" {
+			httpsOptions.Path = serverURL.EscapedPath()
+		}
+		if serverURL.ForceQuery || serverURL.RawQuery != "" {
+			httpsOptions.Query = serverURL.RawQuery
+			httpsOptions.ForceQuery = serverURL.ForceQuery
 		}
 	case "rcode":
 		var rcode int
@@ -406,9 +410,11 @@ type RemoteTLSDNSServerOptions struct {
 
 type RemoteHTTPSDNSServerOptions struct {
 	RemoteTLSDNSServerOptions
-	Path    string               `json:"path,omitempty"`
-	Method  string               `json:"method,omitempty"`
-	Headers badoption.HTTPHeader `json:"headers,omitempty"`
+	Path       string               `json:"path,omitempty"`
+	Query      string               `json:"query,omitempty"`
+	ForceQuery bool                 `json:"force_query,omitempty"`
+	Method     string               `json:"method,omitempty"`
+	Headers    badoption.HTTPHeader `json:"headers,omitempty"`
 }
 
 type FakeIPDNSServerOptions struct {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 
+	mDNS "github.com/miekg/dns"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/adapter"
@@ -27,9 +28,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	sHTTP "github.com/sagernet/sing/protocol/http"
-
-	mDNS "github.com/miekg/dns"
 )
 
 var _ adapter.DNSTransport = (*HTTP3Transport)(nil)
@@ -86,11 +84,7 @@ func NewHTTP3(ctx context.Context, logger log.ContextLogger, tag string, options
 	if options.ServerPort != 0 && options.ServerPort != 443 {
 		destinationURL.Host = net.JoinHostPort(destinationURL.Host, strconv.Itoa(int(options.ServerPort)))
 	}
-	path := options.Path
-	if path == "" {
-		path = "/dns-query"
-	}
-	err = sHTTP.URLSetPath(&destinationURL, path)
+	err = transport.SetHTTPSDestinationPathAndQuery(&destinationURL, options.Path, options.Query, options.ForceQuery)
 	if err != nil {
 		return nil, err
 	}
