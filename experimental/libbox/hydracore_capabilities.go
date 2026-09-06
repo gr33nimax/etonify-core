@@ -40,6 +40,14 @@ func HydraCoreCancelRuntimeChallenge(id string) bool {
 	return H.CancelRuntimeChallenge(id)
 }
 
+// HydraCoreTurnEdgeEndpoint answers the TURN edge a transport last reached, as
+// `network://host:port`, or an empty string when none was ever recorded. The client uses it
+// for a workerless reachability probe — a single STUN Binding — and shows nothing rather
+// than performing VK authorisation just to obtain an address.
+func HydraCoreTurnEdgeEndpoint() string {
+	return H.TurnEdgeEndpoint()
+}
+
 func HydraCoreSetNetworkGeneration(generation int64) {
 	if generation >= 0 {
 		H.SetNetworkGeneration(uint64(generation))

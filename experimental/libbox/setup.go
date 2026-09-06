@@ -2,9 +2,11 @@ package libbox
 
 import (
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"time"
 
+	H "github.com/sagernet/sing-box/common/hydracore"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/locale"
 	"github.com/sagernet/sing-box/log"
@@ -59,6 +61,9 @@ func Setup(options *SetupOptions) error {
 
 	os.MkdirAll(sWorkingPath, 0o777)
 	os.MkdirAll(sTempPath, 0o777)
+	// The last TURN edge a transport reached outlives it in this file, so a later process
+	// can offer a workerless edge probe without ever authorising into VK for an address.
+	H.SetTurnEdgeStorePath(filepath.Join(sWorkingPath, "turn_edge.json"))
 	return nil
 }
 

@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"github.com/pion/logging"
+	"github.com/pion/stun/v3"
 	"github.com/pion/transport/v4/stdnet"
 	"github.com/pion/turn/v4"
 	"github.com/sagernet/sing-box/adapter"
 	D "github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/hydracore"
 	callcommon "github.com/sagernet/sing-box/transport/call/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -75,6 +77,10 @@ func getTURNEndpointPenalty(endpoint turnEndpoint) int {
 
 func recordTURNEndpointSuccess(endpoint turnEndpoint) {
 	key := turnEndpointKey(endpoint)
+	// The one address a workerless edge probe can be sent to: this edge answered an
+	// allocation, so it exists and it speaks TURN. Kept for the client, which measures it
+	// with a single STUN Binding instead of raising four workers to learn an RTT.
+	hydracore.RecordTurnEdgeEndpoint(key)
 	val, _ := turnEndpointQualityRegistry.LoadOrStore(key, &turnEndpointScore{})
 	stat := val.(*turnEndpointScore)
 	stat.mu.Lock()
@@ -145,6 +151,9 @@ func allocateTURN(
 		if err == nil {
 			recordTURNEndpointSuccess(endpoint)
 			return connection, nil
+		}
+		if isTURNCredentialError(err) {
+			return nil, fmt.Errorf("call vk_parasite: VK TURN credentials rejected: %w", err)
 		}
 		recordTURNEndpointFailure(endpoint)
 		lastErr = err
@@ -261,6 +270,9 @@ func allocateTURNEndpoint(
 		if allocErr != nil {
 			client.Close()
 			_ = base.Close()
+			if isTURNCredentialError(allocErr) {
+				return nil, allocErr
+			}
 			lastErr = allocErr
 			continue
 		}
@@ -268,6 +280,15 @@ func allocateTURNEndpoint(
 		return &managedTURNConn{PacketConn: allocation, client: client, base: base, turnAddress: turnAddress}, nil
 	}
 	return nil, lastErr
+}
+
+func isTURNCredentialError(err error) bool {
+	var turnErr *stun.TurnError
+	if !errors.As(err, &turnErr) {
+		return false
+	}
+	return turnErr.ErrorCodeAttr.Code == stun.CodeUnauthorized ||
+		turnErr.ErrorCodeAttr.Code == stun.CodeWrongCredentials
 }
 
 func parseTURNURL(rawURL string) (turnEndpoint, error) {

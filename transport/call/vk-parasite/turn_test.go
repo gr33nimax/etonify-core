@@ -6,15 +6,50 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pion/stun/v3"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/hydracore"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTURNCredentialErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		err        error
+		credential bool
+	}{
+		{"unauthorized", &stun.TurnError{ErrorCodeAttr: stun.ErrorCodeAttribute{Code: stun.CodeUnauthorized}}, true},
+		{"wrong credentials", &stun.TurnError{ErrorCodeAttr: stun.ErrorCodeAttribute{Code: stun.CodeWrongCredentials}}, true},
+		{"stale nonce", &stun.TurnError{ErrorCodeAttr: stun.ErrorCodeAttribute{Code: stun.CodeStaleNonce}}, false},
+		{"network error", context.DeadlineExceeded, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.credential, isTURNCredentialError(fmt.Errorf("allocate: %w", test.err)))
+		})
+	}
+}
+
+func TestTURNEndpointSuccessReachesTheEdgeStore(t *testing.T) {
+	// Not parallel: the edge store is one per process, and this test owns it for a moment.
+	hydracore.SetTurnEdgeStorePath(filepath.Join(t.TempDir(), "turn_edge.json"))
+	defer hydracore.SetTurnEdgeStorePath("")
+
+	endpoint := turnEndpoint{
+		destination: M.ParseSocksaddr("relay.example.invalid:3478"),
+		network:     "udp",
+	}
+	recordTURNEndpointSuccess(endpoint)
+	require.Equal(t, "udp://relay.example.invalid:3478", hydracore.TurnEdgeEndpoint())
+}
 
 func TestParseTURNUDPURL(t *testing.T) {
 	t.Parallel()
