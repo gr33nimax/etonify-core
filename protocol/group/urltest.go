@@ -30,6 +30,10 @@ func RegisterURLTest(registry *outbound.Registry) {
 	outbound.Register[option.URLTestOutboundOptions](registry, C.TypeURLTest, NewURLTest)
 }
 
+// The ceiling on a configured probe budget. Beyond it a group is asking for a channel and a
+// worker pool no measurement needs, and the configuration is refused instead of allocated.
+const MaxURLTestProbeConcurrency = 256
+
 var _ adapter.OutboundGroup = (*URLTest)(nil)
 var _ adapter.URLTestSelectionRefresher = (*URLTest)(nil)
 
@@ -339,14 +343,24 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 	if idleTimeout == 0 {
 		idleTimeout = C.DefaultURLTestIdleTimeout
 	}
+	if interval > idleTimeout {
+		return nil, E.New("interval must be less or equal than idle_timeout")
+	}
+	// The budget is configuration, and a value that cannot be honoured has to stop the start
+	// before any goroutine exists: a negative concurrency reaches the batch as a negative
+	// channel size, which is a panic in the process rather than a refused configuration.
+	// Zero keeps the built-in budget; the limits are wide enough for every sensible client.
+	if probeTimeout < 0 {
+		return nil, E.New("probe_timeout must not be negative")
+	}
+	if probeConcurrency < 0 || probeConcurrency > MaxURLTestProbeConcurrency {
+		return nil, E.New("probe_concurrency must be between 0 and ", MaxURLTestProbeConcurrency)
+	}
 	if probeTimeout == 0 {
 		probeTimeout = C.TCPTimeout
 	}
 	if probeConcurrency == 0 {
 		probeConcurrency = 10
-	}
-	if interval > idleTimeout {
-		return nil, E.New("interval must be less or equal than idle_timeout")
 	}
 	var history adapter.URLTestHistoryStorage
 	if historyFromCtx := service.PtrFromContext[urltest.HistoryStorage](ctx); historyFromCtx != nil {

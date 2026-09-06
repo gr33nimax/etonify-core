@@ -225,6 +225,34 @@ func TestURLTestProbeBudgetDefaults(t *testing.T) {
 	require.Equal(t, 10, group.probeConcurrency)
 }
 
+func TestURLTestProbeBudgetRejectsImpossibleValues(t *testing.T) {
+	// A negative concurrency used to reach the batch as a negative channel size, which
+	// panics in a goroutine the start had already launched; the refusal has to come first.
+	for _, budget := range []struct {
+		timeout     time.Duration
+		concurrency int
+	}{
+		{0, -1},
+		{-time.Second, 0},
+		{0, MaxURLTestProbeConcurrency + 1},
+	} {
+		_, err := NewURLTestGroup(
+			t.Context(),
+			&urlTestOutboundManager{outbound: &urlTestSelectionOutbound{tag: "rejected"}},
+			log.NewNOPFactory().Logger(),
+			[]adapter.Outbound{&urlTestSelectionOutbound{tag: "rejected"}},
+			"http://example.invalid/",
+			0,
+			0,
+			0,
+			budget.timeout,
+			budget.concurrency,
+			false,
+		)
+		require.Error(t, err, "budget timeout=%v concurrency=%d must be refused", budget.timeout, budget.concurrency)
+	}
+}
+
 func TestURLTestSelectionIgnoresUnavailableHistory(t *testing.T) {
 	t.Parallel()
 
