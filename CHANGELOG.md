@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.13.16-extended-hydracore.11-debug.61
+
+- The TURN edge store re-reads the current runtime generation inside the same critical
+  section as its write and refuses a record of a runtime that has been replaced: a
+  caller's check and its write ran under different locks, so a callback suspended
+  between the two could land after a switch and overwrite the new runtime's edge,
+  leaving the current transport's address stale until its next allocation.
+
 ## v1.13.16-extended-hydracore.11-debug.60
 
 - The runtime event stream follows every non-zero traffic reading with one

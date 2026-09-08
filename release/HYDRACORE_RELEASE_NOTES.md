@@ -18,6 +18,12 @@ Transport health is part of the typed runtime stream. Reports carry the outbound
 tag and runtime generation; material state, challenge, lane, and failure changes
 wake the existing stream without JSON polling across JNI.
 
+debug.61 carries one fix on top of debug.60: the TURN edge record's
+generation check and its write are one step inside the store, so a
+transport callback suspended across a runtime switch can no longer land
+after the new runtime's record and overwrite it. The current transport's
+edge no longer goes stale until its next allocation.
+
 debug.60 carries the second September hardening round. The runtime event
 stream follows every non-zero traffic reading with exactly one closing
 reading, so a speed that was measured no longer stays on screen for as
