@@ -100,10 +100,14 @@ func (f *disabledFactory) Enable(level Level) error {
 	}
 	options := f.options
 	options.Options.Disabled = false
-	active, err := New(options)
+	active, err := newActiveFactory(options)
 	if err != nil {
 		return err
 	}
+	// The requested level is applied before the factory is published: published first,
+	// it opens a window where workers resolve the new state and run it at whatever
+	// level the configuration itself carried.
+	active.SetLevel(level)
 	if f.started {
 		if err = active.Start(); err != nil {
 			// The failed factory holds whatever it did start; it is not left for the
@@ -114,7 +118,6 @@ func (f *disabledFactory) Enable(level Level) error {
 	}
 	f.counter++
 	f.active.Store(&disabledFactoryState{factory: active, revision: f.counter})
-	active.SetLevel(level)
 	return nil
 }
 
@@ -163,16 +166,18 @@ func (f *disabledFactory) UnSubscribe(subscription observable.Subscription[Entry
 }
 
 // ContextLogger is an interface, and an atomic pointer needs a concrete type to point at.
-type ContextLoggerValue struct {
-	logger ContextLogger
+type disabledLoggerCache struct {
+	revision uint64
+	logger   ContextLogger
 }
 
 type disabledLogger struct {
 	factory *disabledFactory
 	tag     string
-	// The delegate under the revision it was resolved for; one load on the happy path.
-	delegate atomic.Pointer[ContextLoggerValue]
-	seen     atomic.Uint64
+	// The delegate and the revision it was resolved under, in one immutable value:
+	// two separate atomics could interleave a publish into pairing an old logger
+	// with a new revision, which the fast path would then trust as current.
+	cache atomic.Pointer[disabledLoggerCache]
 }
 
 func (l *disabledLogger) resolve() ContextLogger {
@@ -180,12 +185,11 @@ func (l *disabledLogger) resolve() ContextLogger {
 	if state == nil {
 		return nil
 	}
-	if cached := l.delegate.Load(); cached != nil && l.seen.Load() == state.revision {
+	if cached := l.cache.Load(); cached != nil && cached.revision == state.revision {
 		return cached.logger
 	}
 	resolved := state.factory.NewLogger(l.tag)
-	l.delegate.Store(&ContextLoggerValue{logger: resolved})
-	l.seen.Store(state.revision)
+	l.cache.Store(&disabledLoggerCache{revision: state.revision, logger: resolved})
 	return resolved
 }
 

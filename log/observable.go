@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -23,9 +24,12 @@ type defaultFactory struct {
 	filePath          string
 	platformWriter    PlatformWriter
 	needObservable    bool
-	level             Level
-	subscriber        *observable.Subscriber[Entry]
-	observer          *observable.Observer[Entry]
+	// Read by every logging goroutine and written by SetLevel from the command
+	// thread: plain field access here was a data race, and the external mutex of
+	// the factory that owns this one does not reach into Log.
+	level          atomic.Uint32
+	subscriber     *observable.Subscriber[Entry]
+	observer       *observable.Observer[Entry]
 }
 
 func NewDefaultFactory(
@@ -47,9 +51,9 @@ func NewDefaultFactory(
 		filePath:       filePath,
 		platformWriter: platformWriter,
 		needObservable: needObservable,
-		level:          LevelTrace,
 		subscriber:     observable.NewSubscriber[Entry](128),
 	}
+	factory.level.Store(uint32(LevelTrace))
 	/*if platformWriter != nil {
 		factory.platformFormatter.DisableColors = platformWriter.DisableColors()
 	}*/
@@ -79,11 +83,11 @@ func (f *defaultFactory) Close() error {
 }
 
 func (f *defaultFactory) Level() Level {
-	return f.level
+	return Level(f.level.Load())
 }
 
 func (f *defaultFactory) SetLevel(level Level) {
-	f.level = level
+	f.level.Store(uint32(level))
 }
 
 func (f *defaultFactory) Logger() ContextLogger {
@@ -111,14 +115,17 @@ type observableLogger struct {
 
 func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
 	level = OverrideLevelFromContext(level, ctx)
+	// One read per line: the level may change concurrently, and the branches below
+	// must not each see a different one.
+	enabled := l.level.Load()
 	// A line below the configured level costs nothing: it is not formatted, not written, not
 	// published and not handed to the platform. Both the observable subscriber and the platform
 	// writer used to be exempt from this — the level gated the file writer alone.
-	if level > l.level {
+	if level > Level(enabled) {
 		return
 	}
 	nowTime := time.Now()
-	if l.needObservable && level <= l.level {
+	if l.needObservable {
 		message, messageSimple := l.formatter.FormatWithSimple(ctx, level, l.tag, F.ToString(args...), nowTime)
 		if level == LevelPanic {
 			panic(message)
@@ -128,7 +135,7 @@ func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
 			os.Exit(1)
 		}
 		l.subscriber.Emit(Entry{level, messageSimple})
-	} else if level <= l.level {
+	} else {
 		message := l.formatter.Format(ctx, level, l.tag, F.ToString(args...), nowTime)
 		if level == LevelPanic {
 			panic(message)
@@ -144,7 +151,7 @@ func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
 	// instead — WriteMessage into the command server, out over its log stream and across the
 	// language boundary — at any level, for the platform to drop again by its own threshold.
 	// Profiled at seven percent of one core with five lines a second actually being kept.
-	if l.platformWriter != nil && level <= l.level {
+	if l.platformWriter != nil {
 		l.platformWriter.WriteMessage(level, l.platformFormatter.Format(ctx, level, l.tag, F.ToString(args...), nowTime))
 	}
 }
