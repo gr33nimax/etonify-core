@@ -48,6 +48,29 @@ func HydraCoreTurnEdgeEndpoint() string {
 	return H.TurnEdgeEndpoint()
 }
 
+// TurnEdgeAttribution is the edge record with its attribution: which transport reached
+// the edge and under which runtime generation the allocation happened.
+type TurnEdgeAttribution struct {
+	Endpoint          string
+	TransportTag      string
+	RuntimeGeneration int64
+	UpdatedAtMillis   int64
+}
+
+// HydraCoreTurnEdgeAttribution answers the full record behind HydraCoreTurnEdgeEndpoint.
+// A client that files the edge under a specific server accepts it only when the transport
+// tag and the runtime generation match the outbound it is filing it under; an older
+// record with no tag belongs to nobody in particular and reads as "not measured".
+func HydraCoreTurnEdgeAttribution() *TurnEdgeAttribution {
+	record := H.TurnEdgeAttribution()
+	return &TurnEdgeAttribution{
+		Endpoint:          record.Endpoint,
+		TransportTag:      record.TransportTag,
+		RuntimeGeneration: int64(record.RuntimeGeneration),
+		UpdatedAtMillis:   record.UpdatedAt,
+	}
+}
+
 func HydraCoreSetNetworkGeneration(generation int64) {
 	if generation >= 0 {
 		H.SetNetworkGeneration(uint64(generation))

@@ -44,6 +44,11 @@ type FeatureSet struct {
 	// The last reached TURN edge is readable through HydraCoreTurnEdgeEndpoint, so a client
 	// can measure the edge with one STUN Binding instead of raising a transport for it.
 	TurnEdgeEndpoint bool `json:"turn_edge_endpoint"`
+	// The record behind HydraCoreTurnEdgeEndpoint carries the transport tag and the
+	// runtime generation the allocation happened under, so a client can attribute the
+	// edge to the outbound that actually reached it. An older core answers with the bare
+	// endpoint, and a client that cannot see this flag must not trust a tag-less record.
+	TurnEdgeAttribution bool `json:"turn_edge_attribution"`
 	// A DoH resolver keeps its query string. A client that cannot see this flag must not
 	// accept or emit one: an older core refuses the whole configuration over the unknown
 	// `query` and `force_query` fields rather than ignoring them.
@@ -145,6 +150,10 @@ func Capabilities() CapabilitySet {
 			// An older core has no HydraCoreTurnEdgeEndpoint to call; a client that cannot
 			// see this flag must expect nothing from the probe and say "not measured".
 			TurnEdgeEndpoint: true,
+			// The edge record says which transport reached it and under which runtime
+			// generation; a client that cannot see this flag has only the bare endpoint
+			// and must treat its attribution as unconfirmed.
+			TurnEdgeAttribution: true,
 			// A DoH query string reaches the resolver on this core. An older one refuses
 			// the configuration over the unknown fields, so the client gates both its
 			// storage and its emission on this flag.

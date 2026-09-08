@@ -148,7 +148,7 @@ func (c *Client) DialPath(ctx context.Context, workerID uint16) (*quic.Conn, io.
 	if err != nil {
 		return nil, nil, fmt.Errorf("worker %d TURN gate: %w", workerID, err)
 	}
-	allocation, err := allocateTURN(ctx, c.options.Dialer, c.options.DNSRouter, credentials, int(workerID))
+	allocation, err := allocateTURN(ctx, c.options.Dialer, c.options.DNSRouter, credentials, int(workerID), c.options.TransportTag)
 	releaseTURN()
 	if err != nil {
 		if isTURNCredentialError(err) && c.options.InvalidateCredentials != nil {

@@ -12,6 +12,7 @@ const (
 	ErrorCodeRuntimeCoreDied             = "runtime.core_died"
 	ErrorCodeRuntimeIPCLost              = "runtime.ipc.lost"
 	ErrorCodeRuntimeIPCBindFailed        = "runtime.ipc.bind_failed"
+	ErrorCodeRuntimeReloadUnsupported    = "runtime.reload_unsupported"
 	ErrorCodeNetworkNoInterface          = "network.no_interface"
 	ErrorCodeNetworkLost                 = "network.lost"
 	ErrorCodeNetworkGenerationStale      = "network.generation_stale"
@@ -42,7 +43,7 @@ func AllErrorCodes() []string {
 	return []string{
 		ErrorCodeConfigInvalidPlan, ErrorCodeConfigDigestMismatch, ErrorCodeConfigQuarantined, ErrorCodeConfigStale,
 		ErrorCodeRuntimeCancelled, ErrorCodeRuntimeSuperseded, ErrorCodeRuntimeStartDeadline, ErrorCodeRuntimeStopUnconfirmed,
-		ErrorCodeRuntimeCoreDied, ErrorCodeRuntimeIPCLost, ErrorCodeRuntimeIPCBindFailed,
+		ErrorCodeRuntimeCoreDied, ErrorCodeRuntimeIPCLost, ErrorCodeRuntimeIPCBindFailed, ErrorCodeRuntimeReloadUnsupported,
 		ErrorCodeNetworkNoInterface, ErrorCodeNetworkLost, ErrorCodeNetworkGenerationStale,
 		ErrorCodeDNSBootstrapTimeout, ErrorCodeDNSUpstreamTimeout, ErrorCodeDNSUpstreamRefused, ErrorCodeDNSNoAnswer,
 		ErrorCodeVKCaptchaRequired, ErrorCodeVKCaptchaTimeout, ErrorCodeVKCaptchaCancelled, ErrorCodeVKCredentialsFlood,

@@ -75,12 +75,14 @@ func getTURNEndpointPenalty(endpoint turnEndpoint) int {
 	return stat.failures
 }
 
-func recordTURNEndpointSuccess(endpoint turnEndpoint) {
+func recordTURNEndpointSuccess(endpoint turnEndpoint, transportTag string) {
 	key := turnEndpointKey(endpoint)
 	// The one address a workerless edge probe can be sent to: this edge answered an
-	// allocation, so it exists and it speaks TURN. Kept for the client, which measures it
-	// with a single STUN Binding instead of raising four workers to learn an RTT.
-	hydracore.RecordTurnEdgeEndpoint(key)
+	// allocation, so it exists and it speaks TURN. Kept for the client together with the
+	// transport that reached it and the runtime generation it happened under, because the
+	// client files it per server and must not attach one transport's edge to another
+	// server's profile.
+	hydracore.RecordTurnEdgeEndpoint(key, transportTag, hydracore.CurrentRuntimeGeneration())
 	val, _ := turnEndpointQualityRegistry.LoadOrStore(key, &turnEndpointScore{})
 	stat := val.(*turnEndpointScore)
 	stat.mu.Lock()
@@ -116,6 +118,7 @@ func allocateTURN(
 	dnsRouter adapter.DNSRouter,
 	credentials TURNCredentials,
 	preferred int,
+	transportTag string,
 ) (net.PacketConn, error) {
 	if credentials.Username == "" || credentials.Credential == "" {
 		return nil, errors.New("call vk_parasite: VK returned incomplete TURN credentials")
@@ -149,7 +152,7 @@ func allocateTURN(
 		endpoint := destinations[offset]
 		connection, err := allocateTURNEndpoint(ctx, dialer, dnsRouter, credentials, endpoint, preferred)
 		if err == nil {
-			recordTURNEndpointSuccess(endpoint)
+			recordTURNEndpointSuccess(endpoint, transportTag)
 			return connection, nil
 		}
 		if isTURNCredentialError(err) {

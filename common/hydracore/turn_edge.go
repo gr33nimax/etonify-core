@@ -16,15 +16,24 @@ import (
 // so a client can ask for it from a later process — one that never ran the transport at all
 // — and a client that gets an empty string shows "not measured" rather than guessing an
 // address, because no VK authorisation is ever performed just to obtain one.
-type turnEdgeRecord struct {
-	Endpoint  string `json:"endpoint,omitempty"`
-	UpdatedAt int64  `json:"updated_at,omitempty"`
+//
+// The endpoint alone is not an attribution. It is a global record in a core that can serve
+// several tagged transports across runtime generations, and a client that files it under
+// whichever server was just announced can attach the previous transport's edge to the next
+// server's profile. The record therefore carries the transport tag and the runtime
+// generation the allocation happened under, and a client is expected to accept it only when
+// both match the outbound it is filing it under.
+type TurnEdgeRecord struct {
+	Endpoint          string `json:"endpoint,omitempty"`
+	TransportTag      string `json:"transport_tag,omitempty"`
+	RuntimeGeneration uint64 `json:"runtime_generation,omitempty"`
+	UpdatedAt         int64  `json:"updated_at,omitempty"`
 }
 
 type turnEdgeStore struct {
-	mu       sync.RWMutex
-	endpoint string
-	path     string
+	mu     sync.RWMutex
+	record TurnEdgeRecord
+	path   string
 }
 
 var turnEdge turnEdgeStore
@@ -37,21 +46,27 @@ func SetTurnEdgeStorePath(path string) {
 	turnEdge.mu.Unlock()
 }
 
-// RecordTurnEdgeEndpoint remembers an endpoint the transport reached, and makes a
-// best-effort attempt to keep it for later processes. A store that cannot be written
-// still serves the running one; the transport must not fail over a diagnostic hint.
-func RecordTurnEdgeEndpoint(endpoint string) {
+// RecordTurnEdgeEndpoint remembers an endpoint the transport reached together with the
+// tag of the transport and the runtime generation the allocation happened under, and
+// makes a best-effort attempt to keep it for later processes. A store that cannot be
+// written still serves the running one; the transport must not fail over a diagnostic
+// hint.
+func RecordTurnEdgeEndpoint(endpoint string, transportTag string, runtimeGeneration uint64) {
 	if endpoint == "" {
 		return
 	}
 	turnEdge.mu.Lock()
 	defer turnEdge.mu.Unlock()
-	turnEdge.endpoint = endpoint
+	turnEdge.record = TurnEdgeRecord{
+		Endpoint:          endpoint,
+		TransportTag:      transportTag,
+		RuntimeGeneration: runtimeGeneration,
+		UpdatedAt:         time.Now().UnixMilli(),
+	}
 	if turnEdge.path == "" {
 		return
 	}
-	record := turnEdgeRecord{Endpoint: endpoint, UpdatedAt: time.Now().UnixMilli()}
-	content, err := json.Marshal(record)
+	content, err := json.Marshal(turnEdge.record)
 	if err != nil {
 		return
 	}
@@ -66,32 +81,40 @@ func RecordTurnEdgeEndpoint(endpoint string) {
 	_ = os.Rename(temporary, turnEdge.path)
 }
 
-// TurnEdgeEndpoint answers the endpoint a transport last reached. The file is re-read on
-// every call when one is configured: the caller is usually a different process than the one
-// that recorded the edge, and it may have recorded it after this process first looked, so a
-// first empty answer must not be remembered as permanent. The file is a few dozen bytes;
-// callers ask when a screen opens, not per packet. Empty means no transport has ever
-// recorded an edge.
-func TurnEdgeEndpoint() string {
+// TurnEdgeAttribution answers the full record of the edge a transport last reached. The
+// file is re-read on every call when one is configured: the caller is usually a different
+// process than the one that recorded the edge, and it may have recorded it after this
+// process first looked, so a first empty answer must not be remembered as permanent. The
+// file is a few dozen bytes; callers ask when a screen opens, not per packet. An empty
+// endpoint means no transport has ever recorded an edge; an empty tag or a zero runtime
+// generation means the record predates attribution and belongs to nobody in particular.
+func TurnEdgeAttribution() TurnEdgeRecord {
 	turnEdge.mu.Lock()
 	path := turnEdge.path
 	turnEdge.mu.Unlock()
 	if path == "" {
 		turnEdge.mu.RLock()
 		defer turnEdge.mu.RUnlock()
-		return turnEdge.endpoint
+		return turnEdge.record
 	}
 	if content, err := os.ReadFile(path); err == nil {
-		var record turnEdgeRecord
+		var record TurnEdgeRecord
 		if json.Unmarshal(content, &record) == nil && record.Endpoint != "" {
-			return record.Endpoint
+			return record
 		}
 	}
-	return ""
+	return TurnEdgeRecord{}
+}
+
+// TurnEdgeEndpoint answers the endpoint a transport last reached, without the
+// attribution. Kept for clients that only wanted the address; anything that files the
+// edge under a specific server belongs on [TurnEdgeAttribution] instead.
+func TurnEdgeEndpoint() string {
+	return TurnEdgeAttribution().Endpoint
 }
 
 func resetTurnEdgeStore() {
 	turnEdge.mu.Lock()
-	turnEdge.endpoint = ""
+	turnEdge.record = TurnEdgeRecord{}
 	turnEdge.mu.Unlock()
 }

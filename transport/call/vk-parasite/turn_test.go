@@ -47,7 +47,7 @@ func TestTURNEndpointSuccessReachesTheEdgeStore(t *testing.T) {
 		destination: M.ParseSocksaddr("relay.example.invalid:3478"),
 		network:     "udp",
 	}
-	recordTURNEndpointSuccess(endpoint)
+	recordTURNEndpointSuccess(endpoint, "call-vk")
 	require.Equal(t, "udp://relay.example.invalid:3478", hydracore.TurnEdgeEndpoint())
 }
 
