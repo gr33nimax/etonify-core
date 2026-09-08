@@ -212,5 +212,9 @@ func (c *Client) healthSnapshot(now time.Time) HC.TransportHealthSnapshot {
 }
 
 func (c *Client) publishObservedHealth(now time.Time) {
-	HC.PublishTransportHealth(HC.CurrentRuntimeGeneration(), c.healthSnapshot(now))
+	// The client's own creation generation, not whatever is current at publish time:
+	// close cancels contexts without waiting for the loop to notice, and a leftover
+	// client must not publish its health under the generation of the runtime that
+	// replaced it. PublishTransportHealth drops anything older than the current one.
+	HC.PublishTransportHealth(c.runtimeGeneration, c.healthSnapshot(now))
 }

@@ -42,13 +42,44 @@ func TestTURNEndpointSuccessReachesTheEdgeStore(t *testing.T) {
 	// Not parallel: the edge store is one per process, and this test owns it for a moment.
 	hydracore.SetTurnEdgeStorePath(filepath.Join(t.TempDir(), "turn_edge.json"))
 	defer hydracore.SetTurnEdgeStorePath("")
+	hydracore.SetRuntimeGeneration(7)
+	defer hydracore.SetRuntimeGeneration(0)
 
 	endpoint := turnEndpoint{
 		destination: M.ParseSocksaddr("relay.example.invalid:3478"),
 		network:     "udp",
 	}
-	recordTURNEndpointSuccess(endpoint, "call-vk")
-	require.Equal(t, "udp://relay.example.invalid:3478", hydracore.TurnEdgeEndpoint())
+	recordTURNEndpointSuccess(endpoint, "call-vk", 7)
+	record := hydracore.TurnEdgeAttribution()
+	require.Equal(t, "udp://relay.example.invalid:3478", record.Endpoint)
+	require.Equal(t, "call-vk", record.TransportTag)
+	require.Equal(t, uint64(7), record.RuntimeGeneration)
+}
+
+// An allocation finishing after the runtime switched belongs to the runtime that asked
+// for it: recording it under the new one would attach the old transport's edge to
+// whatever runs next. The leftover client's success is dropped, not re-labelled.
+func TestStaleAllocationDoesNotReachTheEdgeStore(t *testing.T) {
+	hydracore.SetTurnEdgeStorePath(filepath.Join(t.TempDir(), "turn_edge.json"))
+	defer hydracore.SetTurnEdgeStorePath("")
+	hydracore.SetRuntimeGeneration(8)
+	defer hydracore.SetRuntimeGeneration(0)
+
+	endpoint := turnEndpoint{
+		destination: M.ParseSocksaddr("relay.example.invalid:3478"),
+		network:     "udp",
+	}
+	// The current runtime recorded its edge...
+	recordTURNEndpointSuccess(endpoint, "call-vk", 8)
+	// ...and a client of the previous one, still finishing, must not overwrite it.
+	staleEndpoint := turnEndpoint{
+		destination: M.ParseSocksaddr("previous.example.invalid:3478"),
+		network:     "udp",
+	}
+	recordTURNEndpointSuccess(staleEndpoint, "call-vk", 7)
+	record := hydracore.TurnEdgeAttribution()
+	require.Equal(t, "udp://relay.example.invalid:3478", record.Endpoint,
+		"a leftover client's allocation was recorded under the new runtime")
 }
 
 func TestParseTURNUDPURL(t *testing.T) {

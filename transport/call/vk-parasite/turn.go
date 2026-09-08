@@ -75,14 +75,21 @@ func getTURNEndpointPenalty(endpoint turnEndpoint) int {
 	return stat.failures
 }
 
-func recordTURNEndpointSuccess(endpoint turnEndpoint, transportTag string) {
+func recordTURNEndpointSuccess(endpoint turnEndpoint, transportTag string, runtimeGeneration uint64) {
+	// An allocation that finishes after the runtime was switched belongs to the runtime
+	// that asked for it, not the one that happens to be current now: recording it would
+	// attach the old transport's edge to whatever runs next. The generation was captured
+	// when the client was created; a mismatch means the client is a leftover.
+	if runtimeGeneration != hydracore.CurrentRuntimeGeneration() {
+		return
+	}
 	key := turnEndpointKey(endpoint)
 	// The one address a workerless edge probe can be sent to: this edge answered an
 	// allocation, so it exists and it speaks TURN. Kept for the client together with the
 	// transport that reached it and the runtime generation it happened under, because the
 	// client files it per server and must not attach one transport's edge to another
 	// server's profile.
-	hydracore.RecordTurnEdgeEndpoint(key, transportTag, hydracore.CurrentRuntimeGeneration())
+	hydracore.RecordTurnEdgeEndpoint(key, transportTag, runtimeGeneration)
 	val, _ := turnEndpointQualityRegistry.LoadOrStore(key, &turnEndpointScore{})
 	stat := val.(*turnEndpointScore)
 	stat.mu.Lock()
@@ -119,6 +126,7 @@ func allocateTURN(
 	credentials TURNCredentials,
 	preferred int,
 	transportTag string,
+	runtimeGeneration uint64,
 ) (net.PacketConn, error) {
 	if credentials.Username == "" || credentials.Credential == "" {
 		return nil, errors.New("call vk_parasite: VK returned incomplete TURN credentials")
@@ -152,7 +160,7 @@ func allocateTURN(
 		endpoint := destinations[offset]
 		connection, err := allocateTURNEndpoint(ctx, dialer, dnsRouter, credentials, endpoint, preferred)
 		if err == nil {
-			recordTURNEndpointSuccess(endpoint, transportTag)
+			recordTURNEndpointSuccess(endpoint, transportTag, runtimeGeneration)
 			return connection, nil
 		}
 		if isTURNCredentialError(err) {

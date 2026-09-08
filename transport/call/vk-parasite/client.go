@@ -47,12 +47,16 @@ type Client struct {
 	conv         uint32
 	relay        *QUICRelay
 	generation   atomic.Uint64
-	closeOnce    sync.Once
-	sawPath      atomic.Bool
-	sawChallenge atomic.Bool
-	lastFailure  atomic.Pointer[HC.TransportFailure]
-	healthWake   chan struct{}
-	startedAt    time.Time
+	// The runtime generation this client was created under, read once. Close cancels
+	// contexts but never waits for every callback to return, so a dial finishing after
+	// a switch to a new runtime must still be recognisable as belonging to the old one.
+	runtimeGeneration uint64
+	closeOnce         sync.Once
+	sawPath           atomic.Bool
+	sawChallenge      atomic.Bool
+	lastFailure       atomic.Pointer[HC.TransportFailure]
+	healthWake        chan struct{}
+	startedAt         time.Time
 }
 
 type dialOutcome struct {
@@ -97,16 +101,17 @@ func ConnectClient(parent context.Context, options ClientOptions, log logger.Con
 	}
 	ctx, cancel := context.WithCancel(parent)
 	client := &Client{
-		ctx:        ctx,
-		cancel:     cancel,
-		options:    options,
-		logger:     log,
-		server:     server,
-		key:        key,
-		sessionID:  sessionID,
-		conv:       conv,
-		healthWake: make(chan struct{}, 1),
-		startedAt:  time.Now(),
+		ctx:               ctx,
+		cancel:            cancel,
+		options:           options,
+		logger:            log,
+		server:            server,
+		key:               key,
+		sessionID:         sessionID,
+		conv:              conv,
+		runtimeGeneration: HC.CurrentRuntimeGeneration(),
+		healthWake:        make(chan struct{}, 1),
+		startedAt:         time.Now(),
 	}
 	client.relay = NewQUICRelay(ctx, QUICRelayOptions{
 		PathCount: options.Workers,
@@ -148,7 +153,7 @@ func (c *Client) DialPath(ctx context.Context, workerID uint16) (*quic.Conn, io.
 	if err != nil {
 		return nil, nil, fmt.Errorf("worker %d TURN gate: %w", workerID, err)
 	}
-	allocation, err := allocateTURN(ctx, c.options.Dialer, c.options.DNSRouter, credentials, int(workerID), c.options.TransportTag)
+	allocation, err := allocateTURN(ctx, c.options.Dialer, c.options.DNSRouter, credentials, int(workerID), c.options.TransportTag, c.runtimeGeneration)
 	releaseTURN()
 	if err != nil {
 		if isTURNCredentialError(err) && c.options.InvalidateCredentials != nil {
