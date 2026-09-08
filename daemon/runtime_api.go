@@ -140,6 +140,15 @@ func (s *StartedService) SubscribeRuntimeEvents(request *RuntimeEventRequest, se
 	interval := normalizeRuntimeEventInterval(request.IntervalMillis)
 	var trafficTimer *time.Timer
 	var trafficTimerC <-chan time.Time
+	armTrafficTimer := func() {
+		if trafficTimer == nil {
+			trafficTimer = time.NewTimer(interval)
+		} else {
+			trafficTimer.Stop()
+			trafficTimer.Reset(interval)
+		}
+		trafficTimerC = trafficTimer.C
+	}
 	defer func() {
 		if trafficTimer != nil {
 			trafficTimer.Stop()
@@ -176,8 +185,7 @@ func (s *StartedService) SubscribeRuntimeEvents(request *RuntimeEventRequest, se
 			if trafficTimerC != nil {
 				continue
 			}
-			trafficTimer = time.NewTimer(interval)
-			trafficTimerC = trafficTimer.C
+			armTrafficTimer()
 			continue
 		case <-trafficTimerC:
 			trafficTimerC = nil
@@ -193,6 +201,14 @@ func (s *StartedService) SubscribeRuntimeEvents(request *RuntimeEventRequest, se
 		}
 		cachedGroups = current.Groups
 		populateRuntimeTrafficRates(previous, current)
+		// A reading that saw traffic is not the last word about it: without one more
+		// reading after it, the last non-zero rate stays published until some
+		// unrelated event happens along, long after the traffic itself stopped. One
+		// more reading follows every non-zero one; a zero one with no events behind it
+		// leaves the timer stopped entirely, so quiet traffic costs no wake-ups.
+		if trafficTimerC == nil && (current.Status.GetUplink() != 0 || current.Status.GetDownlink() != 0) {
+			armTrafficTimer()
+		}
 		var events []*RuntimeEvent
 		if !proto.Equal(previous.Service, current.Service) || previous.StartedAt != current.StartedAt {
 			events = append(events, &RuntimeEvent{
