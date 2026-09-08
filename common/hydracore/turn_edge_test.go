@@ -11,6 +11,8 @@ import (
 func TestTurnEdgeEndpointLivesInMemoryWithoutAPath(t *testing.T) {
 	resetTurnEdgeStore()
 	SetTurnEdgeStorePath("")
+	SetRuntimeGeneration(1)
+	defer SetRuntimeGeneration(0)
 
 	RecordTurnEdgeEndpoint("udp://turn.example.invalid:3478", "call-vk", 1)
 	require.Equal(t, "udp://turn.example.invalid:3478", TurnEdgeEndpoint())
@@ -20,6 +22,8 @@ func TestTurnEdgeEndpointSurvivesTheProcessThatRecordedIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "turn_edge.json")
 	resetTurnEdgeStore()
 	SetTurnEdgeStorePath(path)
+	SetRuntimeGeneration(1)
+	defer SetRuntimeGeneration(0)
 
 	RecordTurnEdgeEndpoint("udp://turn.example.invalid:3478", "call-vk", 1)
 	require.FileExists(t, path, "the endpoint must reach the file a later process reads")
@@ -37,6 +41,8 @@ func TestTurnEdgeEndpointSeesALaterProcessWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "turn_edge.json")
 	resetTurnEdgeStore()
 	SetTurnEdgeStorePath(path)
+	SetRuntimeGeneration(1)
+	defer SetRuntimeGeneration(0)
 
 	require.Empty(t, TurnEdgeEndpoint(), "an absent file is no edge, not an error")
 
@@ -73,6 +79,8 @@ func TestTurnEdgeAttributionSurvivesTheProcessThatRecordedIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "turn_edge.json")
 	resetTurnEdgeStore()
 	SetTurnEdgeStorePath(path)
+	SetRuntimeGeneration(7)
+	defer SetRuntimeGeneration(0)
 
 	RecordTurnEdgeEndpoint("udp://turn.example.invalid:3478", "call-vk", 7)
 
@@ -83,6 +91,31 @@ func TestTurnEdgeAttributionSurvivesTheProcessThatRecordedIt(t *testing.T) {
 	require.Equal(t, "call-vk", attributed.TransportTag)
 	require.Equal(t, uint64(7), attributed.RuntimeGeneration)
 	require.NotZero(t, attributed.UpdatedAt)
+}
+
+// A caller checks the generation, then writes; the runtime may switch between the two,
+// and the record of the ended runtime must not overwrite the new one's. The check and the
+// write are one critical section in the store now, so this sequence — the stale caller's
+// check already passed, the switch and the new record happened, its write lands last — is
+// refused by the store itself, whoever checked what beforehand.
+func TestTurnEdgeStoreRefusesARecordFromARuntimeThatEnded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "turn_edge.json")
+	resetTurnEdgeStore()
+	SetTurnEdgeStorePath(path)
+	SetRuntimeGeneration(5)
+	defer SetRuntimeGeneration(0)
+
+	RecordTurnEdgeEndpoint("udp://current.example.invalid:3478", "call-vk", 5)
+	// The runtime is replaced; its transport records its edge.
+	SetRuntimeGeneration(6)
+	RecordTurnEdgeEndpoint("udp://next.example.invalid:3478", "call-vk", 6)
+	// A callback of the ended runtime, carrying the generation it checked, arrives last.
+	RecordTurnEdgeEndpoint("udp://stale.example.invalid:3478", "call-vk", 5)
+
+	record := TurnEdgeAttribution()
+	require.Equal(t, "udp://next.example.invalid:3478", record.Endpoint,
+		"a record of an ended runtime overwrote the current one")
+	require.Equal(t, uint64(6), record.RuntimeGeneration)
 }
 
 func TestTurnEdgeEndpointStaysEmptyWhenNothingWasEverRecorded(t *testing.T) {

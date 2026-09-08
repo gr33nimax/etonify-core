@@ -76,19 +76,14 @@ func getTURNEndpointPenalty(endpoint turnEndpoint) int {
 }
 
 func recordTURNEndpointSuccess(endpoint turnEndpoint, transportTag string, runtimeGeneration uint64) {
-	// An allocation that finishes after the runtime was switched belongs to the runtime
-	// that asked for it, not the one that happens to be current now: recording it would
-	// attach the old transport's edge to whatever runs next. The generation was captured
-	// when the client was created; a mismatch means the client is a leftover.
-	if runtimeGeneration != hydracore.CurrentRuntimeGeneration() {
-		return
-	}
 	key := turnEndpointKey(endpoint)
 	// The one address a workerless edge probe can be sent to: this edge answered an
 	// allocation, so it exists and it speaks TURN. Kept for the client together with the
 	// transport that reached it and the runtime generation it happened under, because the
 	// client files it per server and must not attach one transport's edge to another
-	// server's profile.
+	// server's profile. The store itself refuses the record when that runtime has since
+	// been replaced — a caller's own check can be suspended across the switch — so the
+	// generation captured at client creation is handed over, not re-read here.
 	hydracore.RecordTurnEdgeEndpoint(key, transportTag, runtimeGeneration)
 	val, _ := turnEndpointQualityRegistry.LoadOrStore(key, &turnEndpointScore{})
 	stat := val.(*turnEndpointScore)

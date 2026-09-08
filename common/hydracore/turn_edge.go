@@ -51,12 +51,22 @@ func SetTurnEdgeStorePath(path string) {
 // makes a best-effort attempt to keep it for later processes. A store that cannot be
 // written still serves the running one; the transport must not fail over a diagnostic
 // hint.
+//
+// The generation is re-read here, inside the same critical section as the write: a caller
+// checks the generation before it starts writing and can be suspended across a runtime
+// switch, and without this second look its record would land after the newer runtime's
+// and overwrite it — the current transport's edge would go stale until its next
+// allocation. The read takes the runtime state's read lock under this store's own lock,
+// never the other way round, and the slow file write stays under the store's lock alone.
 func RecordTurnEdgeEndpoint(endpoint string, transportTag string, runtimeGeneration uint64) {
 	if endpoint == "" {
 		return
 	}
 	turnEdge.mu.Lock()
 	defer turnEdge.mu.Unlock()
+	if runtimeGeneration != CurrentRuntimeGeneration() {
+		return
+	}
 	turnEdge.record = TurnEdgeRecord{
 		Endpoint:          endpoint,
 		TransportTag:      transportTag,
