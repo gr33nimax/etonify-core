@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.13.16-extended-hydracore.11-debug.60
+
+- The runtime event stream follows every non-zero traffic reading with one
+  closing reading: the last measured speed no longer stays published until an
+  unrelated event happens along, and a zero reading with no traffic behind it
+  leaves the timer stopped entirely.
+- The disabled logger's delegate and its revision travel in one immutable value
+  behind a single atomic pointer - two separate atomics could interleave an
+  OFF-ON transition into pairing an old logger with a new revision, worth a
+  use-after-close on the factory it came from.
+- The active factory's level is stored atomically and read once per line, and
+  `Enable` applies the requested level before publishing the new factory and
+  builds it directly, without nesting a second switchable wrapper.
+- A `vk_parasite` client captures its runtime generation at creation: an
+  allocation or a health publish finishing after the runtime switched is
+  dropped instead of recorded or published under the generation that replaced
+  it.
+- The TURN edge record is an attribution: it carries the transport tag and the
+  runtime generation the allocation happened under, readable through
+  `HydraCoreTurnEdgeAttribution` and reported as the `turn_edge_attribution`
+  capability. `HydraCoreTurnEdgeEndpoint` remains for the bare address.
+- Registered `runtime.reload_unsupported` in the error dictionary, matching the
+  client contract that refuses live reload by name.
+
 ## v1.13.16-extended-hydracore.11-debug.59
 
 - Keep `vk_parasite` workers alive across network rebinds, reject paths dialled for

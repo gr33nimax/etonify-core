@@ -18,6 +18,25 @@ Transport health is part of the typed runtime stream. Reports carry the outbound
 tag and runtime generation; material state, challenge, lane, and failure changes
 wake the existing stream without JSON polling across JNI.
 
+debug.60 carries the second September hardening round. The runtime event
+stream follows every non-zero traffic reading with exactly one closing
+reading, so a speed that was measured no longer stays on screen for as
+long as nothing else happens; quiet traffic costs no wake-ups at all.
+The logger's delegate cache is one atomic value - an OFF-ON transition
+could previously pair an old logger with a new revision and use a
+factory after its close - and the active level is stored atomically and
+applied before a new factory is published. A leftover transport client
+that finishes an allocation or a health publish after the runtime
+switched can no longer publish or record under the generation that
+replaced it.
+
+The TURN edge record is an attribution now: it carries the transport tag
+and the runtime generation the allocation happened under, readable
+through `HydraCoreTurnEdgeAttribution` and reported as the
+`turn_edge_attribution` capability. A client can file the edge under the
+server that actually reached it instead of whichever one was announced
+last; a record from an older core belongs to nobody in particular.
+
 debug.59 carries the runtime hardening from the September audit round. Workers
 survive a network rebind that lands while their reconnect sits in backoff, a
 dial completed for an old network generation is rejected instead of used, and
