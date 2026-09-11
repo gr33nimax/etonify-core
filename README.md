@@ -1,48 +1,126 @@
 # HydraCore
 
-HydraCore is the Android and Linux runtime for the Hydra self-hosted VPN stack.
-It is a GPL-3.0-or-later derivative of sing-box-extended and ships a verified
-Android `libbox.aar` plus Linux `sing-box` archives. It is not a VPN service or
-control plane.
+Сетевой рантайм VPN-стека Hydra: форк sing-box-extended (GPL-3.0) с
+собственным транспортом `vk_parasite` и Android-рантаймом libbox. Это
+движок, а не приложение и не сервис: клиент — HydraBox, управление VPS —
+HYDRA-ULTIMATE.
 
-## Release artifacts
-
-Releases contain the Android AAR and sources, three Android shared libraries,
-two Linux archives (`amd64`, `arm64`), and a signed bundle manifest. Install
-only assets from [GitHub Releases](https://github.com/gr33nimax/hydracore/releases).
-
-The `debug` branch publishes prereleases; `main` publishes stable candidates.
-Client and VPS artifacts must come from the same release and source commit.
-
-```bash
-sing-box hydra capabilities --json
+```
+HydraBox (Android-клиент)          HYDRA-ULTIMATE (VPS)
+      │ libbox AAR                       │ sing-box binary
+      └──────────── HydraCore ───────────┘
 ```
 
-The public distribution identity is `io.hydrabox.hydracore`. Compatibility
-module and binary names retained from upstream are not product branding.
+## Что своё, что унаследовано
 
-## Main components
+От sing-box-extended — конфиг-пайплайн целиком: inbounds/outbounds,
+routing, DNS, TLS, все штатные протоколы, CLI. Собственная часть HydraCore:
 
-- `vk_parasite` Call transport over VK/TURN/DTLS with an inner QUIC relay;
-- HydraCore API v2 capabilities, validation, runtime state, and URL-test APIs;
-- Hydra Subscription v2 schemas and validation;
-- the upstream networking runtime enabled by the release build tags.
+| Компонент | Где | Что делает |
+|---|---|---|
+| Транспорт `vk_parasite` | `transport/call/vk-parasite/` (18 файлов) | QUIC поверх VK-звонков |
+| Регистрация протокола | `protocol/call/` | inbound/outbound `call` в sing-box |
+| Конфиг-опции | `option/call.go` | `"type": "call"` в конфиге sing-box |
+| Контракт возможностей | `common/hydracore/` | capabilities JSON, типы health/failure, generation сети |
+| Android-рантайм | `experimental/libbox/` (42 файла) | AAR через gomobile: команды рантайму, снимки, URL-test |
+| Подписки | `contract/subscription/` | Hydra Subscription v2 |
+| Сборочные теги | `include/call*.go` | `with_call_client` / `with_call_server` |
 
-`vk_parasite` is documented in [HYDRACORE.md](HYDRACORE.md). The Subscription
-contract is in [contract/subscription/HYDRA_SUBSCRIPTION_V2.md](contract/subscription/HYDRA_SUBSCRIPTION_V2.md).
+## Собственный транспорт
 
-## Development
+`vk_parasite` переносит QUIC через медиапуть звонка VK. Клиент создаёт четыре
+независимых пути по `join_links`; worker'ы распределяются между ними и
+переподключаются отдельно. Сервер принимает соединения на одном UDP-сокете.
 
-CI in [`.github/workflows/hydracore.yml`](.github/workflows/hydracore.yml) is
-the release authority. It runs the Go, role, race, baseline, Android, Linux,
-checksum, and provenance checks. Do not build release artifacts locally.
+Эта часть находится в `transport/call/vk-parasite/`; интеграция с sing-box —
+в `protocol/call/` и `option/call.go`.
 
-Contributions target `main`; see [CONTRIBUTING.md](CONTRIBUTING.md). Security
-reports follow [SECURITY.md](SECURITY.md).
+## Конфигурация
 
-## License and notices
+VPS inbound:
 
-HydraCore is GPL-3.0-or-later. Source lineage, copyright notices, and the
-MIT-licensed wrapper files are recorded in [CREDITS.md](CREDITS.md) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See [LICENSE](LICENSE) and
-[LICENSES/MIT.txt](LICENSES/MIT.txt).
+```json
+{
+  "type": "call",
+  "tag": "call-vk-server",
+  "platform": "vk",
+  "mode": "vk_parasite",
+  "listen": "0.0.0.0",
+  "listen_port": 8443,
+  "obfs_password": "outer-secret",
+  "max_workers_per_session": 4,
+  "users": [{"name": "tester-1", "password": "per-user-secret"}]
+}
+```
+
+Клиент outbound:
+
+```json
+{
+  "type": "call",
+  "tag": "proxy-main",
+  "platform": "vk",
+  "mode": "vk_parasite",
+  "server": "203.0.113.10",
+  "server_port": 8443,
+  "join_links": [
+    "https://vk.com/call/join/call-0",
+    "https://vk.com/call/join/call-1",
+    "https://vk.com/call/join/call-2",
+    "https://vk.com/call/join/call-3"
+  ],
+  "user": "tester-1",
+  "password": "per-user-secret",
+  "obfs_password": "outer-secret",
+  "workers": 4
+}
+```
+
+`workers` принимает только 4/8/12/16/20. `mode` — только `vk_parasite`.
+Креды и join-ссылки — секреты, реальные значения в репозиторий не коммитить.
+
+## Возможности рантайма
+
+`sing-box hydra capabilities --json` печатает контракт, который читают
+клиенты:
+
+```json
+{
+  "features": {
+    "call_vk_parasite": true,
+    "call_vk_parasite_quic": true
+  },
+  "protocols": {"call_modes": ["vk_parasite"]}
+}
+```
+
+Клиентская сборка добавляет `call_vk_parasite_client`, серверная —
+`call_vk_parasite_server`.
+
+## Сборка
+
+```bash
+go build ./... && go test ./... && go vet ./...
+bash release/verify_upstream_baseline.sh   # пины Go/NDK/JDK/gomobile
+make lint
+```
+
+Версии инструментов и build tags libbox закреплены в
+`release/UPSTREAM_BASELINE`, проверка — первый шаг каждой CI-джобы.
+Артефакты релиза (AAR, архивы Linux, подписанный манифест) собирает только
+CI (`.github/workflows/hydracore.yml`).
+
+## Релизы
+
+Устанавливать только артефакты из
+[GitHub Releases](https://github.com/gr33nimax/hydracore/releases): AAR с
+исходниками, три shared library для Android, архивы `amd64`/`arm64` и
+подписанный манифест. Ветка `debug` публикует пре-релизы, `main` — стабильных
+кандидатов. Артефакты клиента и VPS бери из одного релиза. Публичная
+идентичность — `io.hydrabox.hydracore`.
+
+## Документация
+
+- [Hydra Subscription v2](contract/subscription/HYDRA_SUBSCRIPTION_V2.md)
+- [Release notes](release/HYDRACORE_RELEASE_NOTES.md) · [CHANGELOG](CHANGELOG.md)
+- [SECURITY](SECURITY.md) · [CONTRIBUTING](CONTRIBUTING.md)
